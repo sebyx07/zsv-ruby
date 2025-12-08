@@ -7,8 +7,16 @@ RSpec::Core::RakeTask.new(:spec)
 
 # Only load rake-compiler for MRI Ruby
 if RUBY_PLATFORM == 'java'
-  # JRuby - no C extension to compile
-  task default: :spec
+  # JRuby - build JNI extension
+  desc 'Build JNI extension for JRuby'
+  task :compile do
+    Dir.chdir('ext/zsv/java') do
+      ruby 'extconf.rb'
+    end
+  end
+
+  task default: %i[compile spec]
+  task spec: :compile
   task test: :spec
 
   desc 'Run benchmarks'
@@ -21,12 +29,7 @@ if RUBY_PLATFORM == 'java'
 
   desc 'Clean build artifacts'
   task :clean do
-    sh 'rm -rf tmp pkg'
-  end
-
-  # Dummy compile task for JRuby
-  task :compile do
-    puts 'JRuby detected - no C extension to compile'
+    sh 'rm -rf tmp pkg ext/zsv/vendor lib/zsv/java/*.{so,dylib} lib/zsv/java/classes'
   end
 else
   require 'rake/extensiontask'

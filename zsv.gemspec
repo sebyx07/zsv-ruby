@@ -37,8 +37,12 @@ Gem::Specification.new do |spec|
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ['lib']
 
-  # Only include C extension for non-JRuby platforms
-  spec.extensions = ['ext/zsv/extconf.rb'] unless RUBY_PLATFORM == 'java'
+  # Platform-specific extensions
+  if RUBY_PLATFORM == 'java'
+    spec.extensions = ['ext/zsv/java/extconf.rb']
+  else
+    spec.extensions = ['ext/zsv/extconf.rb']
+  end
 
   # Development dependencies
   spec.add_development_dependency 'benchmark-ips', '~> 2.0'

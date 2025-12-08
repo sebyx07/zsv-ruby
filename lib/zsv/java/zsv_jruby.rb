@@ -18,8 +18,20 @@ module ZSV
       java_import 'zsv.ZsvParser'
       java_import 'zsv.ZsvNative'
 
-      native_lib = File.join(java_dir, 'libzsv_jni.so')
-      @native_loaded = Java::Zsv::ZsvNative.loadLibrary(native_lib) if File.exist?(native_lib)
+      # Try platform-specific library names
+      lib_names = case RbConfig::CONFIG['host_os']
+                  when /darwin|mac os/i then ['libzsv_jni.dylib', 'libzsv_jni.so']
+                  when /mswin|mingw|cygwin/i then ['zsv_jni.dll']
+                  else ['libzsv_jni.so']
+                  end
+
+      lib_names.each do |name|
+        native_lib = File.join(java_dir, name)
+        if File.exist?(native_lib)
+          @native_loaded = Java::Zsv::ZsvNative.loadLibrary(native_lib)
+          break if @native_loaded
+        end
+      end
     rescue NameError, Java::JavaLang::NoClassDefFoundError
       @native_loaded = false
     end

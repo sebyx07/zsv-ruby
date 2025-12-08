@@ -50,6 +50,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
     - name: Set up JRuby
       uses: ruby/setup-ruby@v1
       with:
@@ -58,6 +64,12 @@ jobs:
 
     - name: Install dependencies
       run: bundle install
+
+    - name: Build native JNI library
+      run: |
+        cd ext/zsv/java
+        ruby extconf.rb
+        ls -la ../../../lib/zsv/java/
 
     - name: Run tests
       run: bundle exec rake spec
