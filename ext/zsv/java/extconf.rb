@@ -71,20 +71,22 @@ end
 os = RbConfig::CONFIG['host_os']
 arch = RbConfig::CONFIG['host_cpu']
 
-zsv_lib = case os
-          when /darwin/i
-            if arch =~ /arm64/i
-              File.join(zsv_dir, 'build/Darwin-arm64/rel/gcc/lib/libzsv.a')
-            else
-              File.join(zsv_dir, 'build/Darwin/rel/gcc/lib/libzsv.a')
-            end
-          when /linux/i
-            File.join(zsv_dir, 'build/Linux/rel/gcc/lib/libzsv.a')
-          else
-            abort("Unsupported OS: #{os}")
-          end
+# zsv build directory varies by platform and compiler
+# Look for the library in possible locations
+zsv_lib = nil
+lib_search_paths = case os
+                   when /darwin/i
+                     # macOS: try various build paths (gcc version varies)
+                     Dir.glob(File.join(zsv_dir, 'build/Darwin*/rel/*/lib/libzsv.a'))
+                   when /linux/i
+                     Dir.glob(File.join(zsv_dir, 'build/Linux/rel/*/lib/libzsv.a'))
+                   else
+                     abort("Unsupported OS: #{os}")
+                   end
 
-abort("zsv library not found at #{zsv_lib}") unless File.exist?(zsv_lib)
+zsv_lib = lib_search_paths.first
+abort("zsv library not found. Searched: #{lib_search_paths.inspect}") unless zsv_lib && File.exist?(zsv_lib)
+puts "Found zsv library at: #{zsv_lib}"
 
 # Find Java
 java_home = ENV['JAVA_HOME']

@@ -12,48 +12,42 @@ extern "C" {
  * Method:    createParserFromPath
  * Signature: (Ljava/lang/String;C)J
  */
-JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromPath
-  (JNIEnv *, jclass, jstring, jchar);
+JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromPath(JNIEnv *, jclass, jstring, jchar);
 
 /*
  * Class:     zsv_ZsvNative
  * Method:    createParserFromString
  * Signature: (Ljava/lang/String;C)J
  */
-JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromString
-  (JNIEnv *, jclass, jstring, jchar);
+JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromString(JNIEnv *, jclass, jstring, jchar);
 
 /*
  * Class:     zsv_ZsvNative
  * Method:    parseNextRow
  * Signature: (J)[Ljava/lang/String;
  */
-JNIEXPORT jobjectArray JNICALL Java_zsv_ZsvNative_parseNextRow
-  (JNIEnv *, jclass, jlong);
+JNIEXPORT jobjectArray JNICALL Java_zsv_ZsvNative_parseNextRow(JNIEnv *, jclass, jlong);
 
 /*
  * Class:     zsv_ZsvNative
  * Method:    closeParser
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_zsv_ZsvNative_closeParser
-  (JNIEnv *, jclass, jlong);
+JNIEXPORT void JNICALL Java_zsv_ZsvNative_closeParser(JNIEnv *, jclass, jlong);
 
 /*
  * Class:     zsv_ZsvNative
  * Method:    rewindParser
  * Signature: (J)Z
  */
-JNIEXPORT jboolean JNICALL Java_zsv_ZsvNative_rewindParser
-  (JNIEnv *, jclass, jlong);
+JNIEXPORT jboolean JNICALL Java_zsv_ZsvNative_rewindParser(JNIEnv *, jclass, jlong);
 
 /*
  * Class:     zsv_ZsvNative
  * Method:    getVersion
  * Signature: ()Ljava/lang/String;
  */
-JNIEXPORT jstring JNICALL Java_zsv_ZsvNative_getVersion
-  (JNIEnv *, jclass);
+JNIEXPORT jstring JNICALL Java_zsv_ZsvNative_getVersion(JNIEnv *, jclass);
 
 #ifdef __cplusplus
 }
