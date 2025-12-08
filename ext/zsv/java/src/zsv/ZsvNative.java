@@ -3,27 +3,63 @@
 
 package zsv;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
-
 /**
  * Native JNI wrapper for the zsv C library.
  * Provides SIMD-accelerated CSV parsing for JRuby.
  */
 public class ZsvNative {
-    private static boolean loaded = false;
+    private static boolean available = false;
     private static String loadError = null;
 
-    static {
+    /**
+     * Load native library from the specified path.
+     * This must be called before any native methods are used.
+     * The library is loaded using this class's class loader.
+     *
+     * @param path Absolute path to the native library
+     * @return true if loading succeeded
+     */
+    public static synchronized boolean loadLibrary(String path) {
+        if (available) {
+            return true;
+        }
+
         try {
-            loadNativeLibrary();
-            loaded = true;
-        } catch (UnsatisfiedLinkError | IOException e) {
+            System.load(path);
+            // Verify native methods work
+            getVersion();
+            available = true;
+            loadError = null;
+            return true;
+        } catch (UnsatisfiedLinkError e) {
+            available = false;
             loadError = e.getMessage();
-            loaded = false;
+            return false;
+        }
+    }
+
+    /**
+     * Load native library by name from java.library.path.
+     *
+     * @param name Library name (without lib prefix or extension)
+     * @return true if loading succeeded
+     */
+    public static synchronized boolean loadLibraryByName(String name) {
+        if (available) {
+            return true;
+        }
+
+        try {
+            System.loadLibrary(name);
+            // Verify native methods work
+            getVersion();
+            available = true;
+            loadError = null;
+            return true;
+        } catch (UnsatisfiedLinkError e) {
+            available = false;
+            loadError = e.getMessage();
+            return false;
         }
     }
 
@@ -31,7 +67,7 @@ public class ZsvNative {
      * Check if native library is available
      */
     public static boolean isAvailable() {
-        return loaded;
+        return available;
     }
 
     /**
@@ -39,57 +75,6 @@ public class ZsvNative {
      */
     public static String getLoadError() {
         return loadError;
-    }
-
-    /**
-     * Load the native library from resources or system path
-     */
-    private static void loadNativeLibrary() throws IOException {
-        String osName = System.getProperty("os.name").toLowerCase();
-        String osArch = System.getProperty("os.arch").toLowerCase();
-
-        String libName;
-        String libExtension;
-
-        if (osName.contains("linux")) {
-            libName = "libzsv_jni";
-            libExtension = ".so";
-        } else if (osName.contains("mac") || osName.contains("darwin")) {
-            libName = "libzsv_jni";
-            libExtension = ".dylib";
-        } else if (osName.contains("win")) {
-            libName = "zsv_jni";
-            libExtension = ".dll";
-        } else {
-            throw new UnsatisfiedLinkError("Unsupported OS: " + osName);
-        }
-
-        // Try to load from java.library.path first
-        try {
-            System.loadLibrary("zsv_jni");
-            return;
-        } catch (UnsatisfiedLinkError e) {
-            // Continue to try embedded library
-        }
-
-        // Try to extract from JAR resources
-        String resourcePath = "/native/" + osName + "/" + osArch + "/" + libName + libExtension;
-        InputStream is = ZsvNative.class.getResourceAsStream(resourcePath);
-
-        if (is == null) {
-            throw new UnsatisfiedLinkError(
-                "Native library not found in resources: " + resourcePath +
-                ". Please ensure zsv_jni is built for your platform."
-            );
-        }
-
-        // Extract to temp file and load
-        File tempFile = File.createTempFile("zsv_jni", libExtension);
-        tempFile.deleteOnExit();
-        Files.copy(is, tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        is.close();
-
-        System.load(tempFile.getAbsolutePath());
     }
 
     // Native methods - these are implemented in C via JNI

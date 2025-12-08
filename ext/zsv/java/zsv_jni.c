@@ -3,10 +3,26 @@
  */
 
 #include <jni.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <zsv.h>
+
+/* Single row structure */
+typedef struct {
+    char **cells;
+    size_t *cell_lens;
+    size_t cell_count;
+} jni_row_t;
+
+/* Row buffer - dynamic array of rows */
+typedef struct {
+    jni_row_t *rows;
+    size_t count;
+    size_t capacity;
+    size_t read_index; /* Index of next row to return */
+} jni_row_buffer_t;
 
 /* Parser context structure */
 typedef struct {
@@ -17,50 +33,79 @@ typedef struct {
     char delimiter;
 
     /* Row buffer */
-    char **cells;
-    size_t *cell_lens;
-    size_t cell_count;
-    size_t cell_capacity;
+    jni_row_buffer_t buffer;
 
     /* State */
-    int row_ready;
     int eof_reached;
 } jni_parser_t;
+
+/* Free a single row */
+static void free_row(jni_row_t *row)
+{
+    if (row->cells) {
+        for (size_t i = 0; i < row->cell_count; i++) {
+            free(row->cells[i]);
+        }
+        free(row->cells);
+        free(row->cell_lens);
+    }
+    row->cells = NULL;
+    row->cell_lens = NULL;
+    row->cell_count = 0;
+}
 
 /* Row callback - called by zsv for each row */
 static void row_handler(void *ctx)
 {
     jni_parser_t *parser = (jni_parser_t *)ctx;
+    jni_row_buffer_t *buf = &parser->buffer;
 
-    /* Reset cell count */
-    parser->cell_count = 0;
+    /* Ensure buffer capacity */
+    if (buf->count >= buf->capacity) {
+        size_t new_cap = buf->capacity == 0 ? 16 : buf->capacity * 2;
+        buf->rows = realloc(buf->rows, new_cap * sizeof(jni_row_t));
+        /* Initialize new slots */
+        for (size_t i = buf->capacity; i < new_cap; i++) {
+            memset(&buf->rows[i], 0, sizeof(jni_row_t));
+        }
+        buf->capacity = new_cap;
+    }
 
-    /* Get all cells */
+    /* Get current row slot */
+    jni_row_t *row = &buf->rows[buf->count];
+
+    /* Get all cells from zsv */
     size_t count = zsv_cell_count(parser->zsv);
 
-    /* Ensure capacity */
-    if (count > parser->cell_capacity) {
-        size_t new_cap = count * 2;
-        parser->cells = realloc(parser->cells, new_cap * sizeof(char *));
-        parser->cell_lens = realloc(parser->cell_lens, new_cap * sizeof(size_t));
-        parser->cell_capacity = new_cap;
-    }
+    /* Allocate cell arrays */
+    row->cells = malloc(count * sizeof(char *));
+    row->cell_lens = malloc(count * sizeof(size_t));
+    row->cell_count = count;
 
     /* Copy cell data */
     for (size_t i = 0; i < count; i++) {
         struct zsv_cell cell = zsv_get_cell(parser->zsv, i);
 
-        /* Allocate and copy cell data */
-        parser->cells[i] = malloc(cell.len + 1);
+        row->cells[i] = malloc(cell.len + 1);
         if (cell.len > 0) {
-            memcpy(parser->cells[i], cell.str, cell.len);
+            memcpy(row->cells[i], cell.str, cell.len);
         }
-        parser->cells[i][cell.len] = '\0';
-        parser->cell_lens[i] = cell.len;
+        row->cells[i][cell.len] = '\0';
+        row->cell_lens[i] = cell.len;
     }
 
-    parser->cell_count = count;
-    parser->row_ready = 1;
+    buf->count++;
+}
+
+/* Initialize parser common parts */
+static void init_parser_common(jni_parser_t *parser, char delimiter)
+{
+    parser->delimiter = delimiter;
+    parser->buffer.rows = NULL;
+    parser->buffer.count = 0;
+    parser->buffer.capacity = 0;
+    parser->buffer.read_index = 0;
+    parser->eof_reached = 0;
 }
 
 /* Create parser from file */
@@ -87,10 +132,7 @@ JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromPath(JNIEnv *env, jcl
         return 0;
     }
 
-    parser->delimiter = (char)delimiter;
-    parser->cell_capacity = 32;
-    parser->cells = malloc(parser->cell_capacity * sizeof(char *));
-    parser->cell_lens = malloc(parser->cell_capacity * sizeof(size_t));
+    init_parser_common(parser, (char)delimiter);
 
     /* Initialize zsv */
     struct zsv_opts opts = {0};
@@ -102,8 +144,6 @@ JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromPath(JNIEnv *env, jcl
     parser->zsv = zsv_new(&opts);
     if (!parser->zsv) {
         fclose(parser->file);
-        free(parser->cells);
-        free(parser->cell_lens);
         free(parser);
         return 0;
     }
@@ -143,10 +183,7 @@ JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromString(JNIEnv *env, j
         return 0;
     }
 
-    parser->delimiter = (char)delimiter;
-    parser->cell_capacity = 32;
-    parser->cells = malloc(parser->cell_capacity * sizeof(char *));
-    parser->cell_lens = malloc(parser->cell_capacity * sizeof(size_t));
+    init_parser_common(parser, (char)delimiter);
 
     /* Initialize zsv */
     struct zsv_opts opts = {0};
@@ -159,8 +196,6 @@ JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromString(JNIEnv *env, j
     if (!parser->zsv) {
         fclose(parser->file);
         free(parser->data);
-        free(parser->cells);
-        free(parser->cell_lens);
         free(parser);
         return 0;
     }
@@ -175,49 +210,76 @@ JNIEXPORT jobjectArray JNICALL Java_zsv_ZsvNative_parseNextRow(JNIEnv *env, jcla
     (void)cls;
 
     jni_parser_t *parser = (jni_parser_t *)(intptr_t)handle;
-    if (!parser || parser->eof_reached) {
+    if (!parser) {
         return NULL;
     }
 
-    /* Reset row ready flag */
-    parser->row_ready = 0;
+    jni_row_buffer_t *buf = &parser->buffer;
 
-    /* Free previous row cells */
-    for (size_t i = 0; i < parser->cell_count; i++) {
-        free(parser->cells[i]);
-        parser->cells[i] = NULL;
-    }
+    /* If we have buffered rows, return the next one */
+    if (buf->read_index < buf->count) {
+        jni_row_t *row = &buf->rows[buf->read_index];
 
-    /* Parse until we get a row or EOF */
-    while (!parser->row_ready && !parser->eof_reached) {
-        enum zsv_status status = zsv_parse_more(parser->zsv);
+        /* Create Java String array */
+        jclass stringClass = (*env)->FindClass(env, "java/lang/String");
+        jobjectArray result = (*env)->NewObjectArray(env, row->cell_count, stringClass, NULL);
 
-        if (status == zsv_status_no_more_input) {
-            /* Call finish to flush any pending row */
-            zsv_finish(parser->zsv);
-            parser->eof_reached = 1;
-            break;
-        } else if (status != zsv_status_ok) {
-            /* Error */
-            return NULL;
+        for (size_t i = 0; i < row->cell_count; i++) {
+            jstring str = (*env)->NewStringUTF(env, row->cells[i]);
+            (*env)->SetObjectArrayElement(env, result, i, str);
+            (*env)->DeleteLocalRef(env, str);
         }
+
+        /* Free this row's data and advance */
+        free_row(row);
+        buf->read_index++;
+
+        return result;
     }
 
-    if (!parser->row_ready) {
+    /* No buffered rows - need to parse more */
+    if (parser->eof_reached) {
         return NULL;
     }
 
-    /* Create Java String array */
-    jclass stringClass = (*env)->FindClass(env, "java/lang/String");
-    jobjectArray result = (*env)->NewObjectArray(env, parser->cell_count, stringClass, NULL);
+    /* Reset buffer for reuse */
+    buf->count = 0;
+    buf->read_index = 0;
 
-    for (size_t i = 0; i < parser->cell_count; i++) {
-        jstring str = (*env)->NewStringUTF(env, parser->cells[i]);
-        (*env)->SetObjectArrayElement(env, result, i, str);
-        (*env)->DeleteLocalRef(env, str);
+    /* Parse more data - this will call row_handler multiple times */
+    enum zsv_status status = zsv_parse_more(parser->zsv);
+
+    if (status == zsv_status_no_more_input) {
+        /* Call finish to flush any pending row */
+        zsv_finish(parser->zsv);
+        parser->eof_reached = 1;
+    } else if (status != zsv_status_ok) {
+        /* Error */
+        return NULL;
     }
 
-    return result;
+    /* Check if we got any rows */
+    if (buf->count > 0) {
+        /* Return the first row */
+        jni_row_t *row = &buf->rows[0];
+
+        jclass stringClass = (*env)->FindClass(env, "java/lang/String");
+        jobjectArray result = (*env)->NewObjectArray(env, row->cell_count, stringClass, NULL);
+
+        for (size_t i = 0; i < row->cell_count; i++) {
+            jstring str = (*env)->NewStringUTF(env, row->cells[i]);
+            (*env)->SetObjectArrayElement(env, result, i, str);
+            (*env)->DeleteLocalRef(env, str);
+        }
+
+        /* Free this row's data and advance */
+        free_row(row);
+        buf->read_index = 1;
+
+        return result;
+    }
+
+    return NULL;
 }
 
 /* Close parser */
@@ -230,12 +292,11 @@ JNIEXPORT void JNICALL Java_zsv_ZsvNative_closeParser(JNIEnv *env, jclass cls, j
     if (!parser)
         return;
 
-    /* Free cells */
-    for (size_t i = 0; i < parser->cell_count; i++) {
-        free(parser->cells[i]);
+    /* Free all buffered rows */
+    for (size_t i = 0; i < parser->buffer.count; i++) {
+        free_row(&parser->buffer.rows[i]);
     }
-    free(parser->cells);
-    free(parser->cell_lens);
+    free(parser->buffer.rows);
 
     /* Cleanup zsv */
     if (parser->zsv) {
@@ -264,15 +325,23 @@ JNIEXPORT jboolean JNICALL Java_zsv_ZsvNative_rewindParser(JNIEnv *env, jclass c
         return JNI_FALSE;
     }
 
+    /* Delete old zsv parser first (don't call finish - we're abandoning it) */
+    if (parser->zsv) {
+        zsv_delete(parser->zsv);
+        parser->zsv = NULL;
+    }
+
+    /* Clear buffer */
+    for (size_t i = parser->buffer.read_index; i < parser->buffer.count; i++) {
+        free_row(&parser->buffer.rows[i]);
+    }
+    parser->buffer.count = 0;
+    parser->buffer.read_index = 0;
+
     /* Rewind file */
     rewind(parser->file);
 
     /* Recreate zsv parser */
-    if (parser->zsv) {
-        zsv_finish(parser->zsv);
-        zsv_delete(parser->zsv);
-    }
-
     struct zsv_opts opts = {0};
     opts.delimiter = parser->delimiter;
     opts.row_handler = row_handler;
@@ -281,14 +350,6 @@ JNIEXPORT jboolean JNICALL Java_zsv_ZsvNative_rewindParser(JNIEnv *env, jclass c
 
     parser->zsv = zsv_new(&opts);
     parser->eof_reached = 0;
-    parser->row_ready = 0;
-
-    /* Free cells */
-    for (size_t i = 0; i < parser->cell_count; i++) {
-        free(parser->cells[i]);
-        parser->cells[i] = NULL;
-    }
-    parser->cell_count = 0;
 
     return parser->zsv ? JNI_TRUE : JNI_FALSE;
 }
