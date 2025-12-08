@@ -64,13 +64,14 @@ static void row_handler(void *ctx)
 }
 
 /* Create parser from file */
-JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromPath(
-    JNIEnv *env, jclass cls, jstring path, jchar delimiter)
+JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromPath(JNIEnv *env, jclass cls,
+                                                                jstring path, jchar delimiter)
 {
     (void)cls;
 
     const char *path_str = (*env)->GetStringUTFChars(env, path, NULL);
-    if (!path_str) return 0;
+    if (!path_str)
+        return 0;
 
     jni_parser_t *parser = calloc(1, sizeof(jni_parser_t));
     if (!parser) {
@@ -111,13 +112,14 @@ JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromPath(
 }
 
 /* Create parser from string */
-JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromString(
-    JNIEnv *env, jclass cls, jstring data, jchar delimiter)
+JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromString(JNIEnv *env, jclass cls,
+                                                                  jstring data, jchar delimiter)
 {
     (void)cls;
 
     const char *data_str = (*env)->GetStringUTFChars(env, data, NULL);
-    if (!data_str) return 0;
+    if (!data_str)
+        return 0;
 
     size_t data_len = strlen(data_str);
 
@@ -167,8 +169,8 @@ JNIEXPORT jlong JNICALL Java_zsv_ZsvNative_createParserFromString(
 }
 
 /* Parse next row */
-JNIEXPORT jobjectArray JNICALL Java_zsv_ZsvNative_parseNextRow(
-    JNIEnv *env, jclass cls, jlong handle)
+JNIEXPORT jobjectArray JNICALL Java_zsv_ZsvNative_parseNextRow(JNIEnv *env, jclass cls,
+                                                               jlong handle)
 {
     (void)cls;
 
@@ -219,14 +221,14 @@ JNIEXPORT jobjectArray JNICALL Java_zsv_ZsvNative_parseNextRow(
 }
 
 /* Close parser */
-JNIEXPORT void JNICALL Java_zsv_ZsvNative_closeParser(
-    JNIEnv *env, jclass cls, jlong handle)
+JNIEXPORT void JNICALL Java_zsv_ZsvNative_closeParser(JNIEnv *env, jclass cls, jlong handle)
 {
     (void)env;
     (void)cls;
 
     jni_parser_t *parser = (jni_parser_t *)(intptr_t)handle;
-    if (!parser) return;
+    if (!parser)
+        return;
 
     /* Free cells */
     for (size_t i = 0; i < parser->cell_count; i++) {
@@ -252,8 +254,7 @@ JNIEXPORT void JNICALL Java_zsv_ZsvNative_closeParser(
 }
 
 /* Rewind parser */
-JNIEXPORT jboolean JNICALL Java_zsv_ZsvNative_rewindParser(
-    JNIEnv *env, jclass cls, jlong handle)
+JNIEXPORT jboolean JNICALL Java_zsv_ZsvNative_rewindParser(JNIEnv *env, jclass cls, jlong handle)
 {
     (void)env;
     (void)cls;
@@ -293,8 +294,7 @@ JNIEXPORT jboolean JNICALL Java_zsv_ZsvNative_rewindParser(
 }
 
 /* Get version */
-JNIEXPORT jstring JNICALL Java_zsv_ZsvNative_getVersion(
-    JNIEnv *env, jclass cls)
+JNIEXPORT jstring JNICALL Java_zsv_ZsvNative_getVersion(JNIEnv *env, jclass cls)
 {
     (void)cls;
     return (*env)->NewStringUTF(env, "1.3.0");

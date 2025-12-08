@@ -3,6 +3,7 @@
 # JRuby implementation of ZSV::Parser using Java classes
 
 require 'java'
+require 'stringio'
 
 module ZSV
   # Parser class for JRuby - wraps the Java ZsvParser
