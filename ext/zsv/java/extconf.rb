@@ -7,6 +7,9 @@ require 'fileutils'
 require 'net/http'
 require 'uri'
 require 'rbconfig'
+require 'rubygems/package'
+require 'zlib'
+require 'openssl'
 
 ZSV_VERSION = '1.3.0'
 ZSV_URL = "https://github.com/liquidaty/zsv/archive/refs/tags/v#{ZSV_VERSION}.tar.gz"
@@ -16,33 +19,76 @@ def run(cmd)
   system(cmd) || abort("Command failed: #{cmd}")
 end
 
-def download_zsv(dest_dir)
-  tarball = File.join(dest_dir, "zsv-#{ZSV_VERSION}.tar.gz")
+def download_file(url, destination, redirect_limit = 10, verify_ssl = true)
+  abort('Too many redirects') if redirect_limit.zero?
 
-  unless File.exist?(tarball)
-    puts "Downloading zsv #{ZSV_VERSION}..."
-    uri = URI(ZSV_URL)
-    
-    # Follow redirects
-    loop do
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = (uri.scheme == 'https')
-      request = Net::HTTP::Get.new(uri)
-      response = http.request(request)
-      
-      case response
-      when Net::HTTPRedirection
-        uri = URI(response['location'])
-      when Net::HTTPSuccess
-        File.open(tarball, 'wb') { |f| f.write(response.body) }
-        break
-      else
-        abort("Failed to download zsv: #{response.code}")
+  uri = URI.parse(url)
+  http = Net::HTTP.new(uri.host, uri.port)
+
+  if uri.scheme == 'https'
+    http.use_ssl = true
+    http.verify_mode = verify_ssl ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE
+    http.ca_file = ENV['SSL_CERT_FILE'] if ENV['SSL_CERT_FILE'] && verify_ssl
+  end
+
+  request = Net::HTTP::Get.new(uri.request_uri)
+
+  begin
+    response = http.request(request)
+  rescue OpenSSL::SSL::SSLError => e
+    if verify_ssl
+      warn "SSL verification failed (#{e.message}), retrying without verification..."
+      return download_file(url, destination, redirect_limit, false)
+    end
+    raise
+  end
+
+  case response
+  when Net::HTTPRedirection
+    download_file(response['location'], destination, redirect_limit - 1, verify_ssl)
+  when Net::HTTPSuccess
+    File.binwrite(destination, response.body)
+  else
+    abort("Failed to download: #{response.code} #{response.message}")
+  end
+end
+
+def extract_tar_gz(tarball, destination)
+  Gem::Package::TarReader.new(Zlib::GzipReader.open(tarball)) do |tar|
+    tar.each do |entry|
+      dest_path = File.join(destination, entry.full_name)
+
+      if entry.directory?
+        FileUtils.mkdir_p(dest_path)
+      elsif entry.file?
+        FileUtils.mkdir_p(File.dirname(dest_path))
+        File.binwrite(dest_path, entry.read)
+        FileUtils.chmod(entry.header.mode, dest_path)
       end
     end
   end
+end
 
-  tarball
+def download_and_extract_zsv(vendor_dir, zsv_dir)
+  # Check if configure script exists (indicates proper extraction)
+  configure_path = File.join(zsv_dir, 'configure')
+  return if File.exist?(configure_path) && File.executable?(configure_path)
+
+  # Remove incomplete extraction
+  FileUtils.rm_rf(zsv_dir) if File.directory?(zsv_dir)
+
+  puts "Downloading zsv #{ZSV_VERSION}..."
+  FileUtils.mkdir_p(vendor_dir)
+
+  tarball = File.join(vendor_dir, 'zsv.tar.gz')
+  download_file(ZSV_URL, tarball)
+
+  puts 'Extracting zsv...'
+  extract_tar_gz(tarball, vendor_dir)
+  FileUtils.rm_f(tarball)
+
+  abort('zsv directory not found after extraction') unless File.directory?(zsv_dir)
+  puts "zsv #{ZSV_VERSION} downloaded successfully"
 end
 
 # Paths
@@ -55,11 +101,8 @@ FileUtils.mkdir_p(vendor_dir)
 FileUtils.mkdir_p(lib_dir)
 FileUtils.mkdir_p(File.join(lib_dir, 'classes'))
 
-# Download and extract zsv if needed
-unless File.directory?(zsv_dir)
-  tarball = download_zsv(vendor_dir)
-  Dir.chdir(vendor_dir) { run("tar xzf #{File.basename(tarball)}") }
-end
+# Download and extract zsv (downloads fresh if configure doesn't exist)
+download_and_extract_zsv(vendor_dir, zsv_dir)
 
 # Build zsv
 Dir.chdir(zsv_dir) do
