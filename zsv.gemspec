@@ -38,11 +38,11 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   # Platform-specific extensions
-  if RUBY_PLATFORM == 'java'
-    spec.extensions = ['ext/zsv/java/extconf.rb']
-  else
-    spec.extensions = ['ext/zsv/extconf.rb']
-  end
+  spec.extensions = if RUBY_PLATFORM == 'java'
+                      ['ext/zsv/java/extconf.rb']
+                    else
+                      ['ext/zsv/extconf.rb']
+                    end
 
   # Development dependencies
   spec.add_development_dependency 'benchmark-ips', '~> 2.0'
