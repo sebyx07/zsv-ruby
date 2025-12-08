@@ -1,7 +1,13 @@
 # frozen_string_literal: true
 
 require_relative 'zsv/version'
-require_relative 'zsv/zsv' # Load C extension
+
+# Load the appropriate extension based on Ruby platform
+if RUBY_PLATFORM == 'java'
+  require_relative 'zsv/java/zsv_jruby'
+else
+  require_relative 'zsv/zsv' # Load C extension
+end
 
 # ZSV - SIMD-accelerated CSV parser
 #
@@ -36,8 +42,8 @@ module ZSV
     #   parser.each { |row| puts row }
     #   parser.close
     #
-    def new(io, **)
-      Parser.new(io, **)
+    def new(io, **options)
+      Parser.new(io, **options)
     end
 
     # Parse CSV data and return an Enumerator
@@ -53,8 +59,8 @@ module ZSV
     #   enum = ZSV.parse_enum("a,b\n1,2\n3,4", headers: true)
     #   enum.first # => {"a" => "1", "b" => "2"}
     #
-    def parse_enum(source, **)
-      parser = Parser.new(source, **)
+    def parse_enum(source, **options)
+      parser = Parser.new(source, **options)
 
       Enumerator.new do |yielder|
         parser.each { |row| yielder << row }

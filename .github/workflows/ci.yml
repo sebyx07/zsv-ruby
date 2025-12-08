@@ -7,7 +7,8 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  test-mri:
+    name: MRI Ruby ${{ matrix.ruby }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -36,6 +37,30 @@ jobs:
     - name: Run benchmarks (quick)
       run: bundle exec ruby benchmark/parse_bench.rb
       if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.3'
+
+  test-jruby:
+    name: JRuby ${{ matrix.jruby }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        jruby: ['9.4']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JRuby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: jruby-${{ matrix.jruby }}
+        bundler-cache: true
+
+    - name: Install dependencies
+      run: bundle install
+
+    - name: Run tests
+      run: bundle exec rake spec
 
   lint:
     runs-on: ubuntu-latest

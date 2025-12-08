@@ -6,4 +6,8 @@ gemspec
 
 gem 'csv', '~> 3.0' # For compatibility testing
 
-gem 'rubocop', '~> 1.81', group: :development
+group :development do
+  gem 'rubocop', '~> 1.81'
+  # rake-compiler is only for MRI Ruby (C extension)
+  gem 'rake-compiler', '~> 1.2', platform: :ruby
+end
