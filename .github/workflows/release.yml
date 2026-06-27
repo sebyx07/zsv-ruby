@@ -1,0 +1,80 @@
+name: Release
+
+# Publishes the gem to RubyGems and creates a GitHub Release whenever a
+# version tag (e.g. v1.3.2) is pushed.
+#
+# Releasing is automated — see RELEASING.md for the one-time RubyGems
+# trusted-publisher setup and the per-release steps (or just run
+# `bundle exec rake release:tag`).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  # Gate the release on a green build + test run on the minimum supported Ruby.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Compile extension
+        run: bundle exec rake compile
+
+      - name: Run tests
+        run: bundle exec rake spec
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write   # create the GitHub Release
+      id-token: write   # RubyGems trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Verify tag matches gem version
+        run: |
+          gem_version="$(ruby -r ./lib/zsv/version.rb -e 'print ZSV::VERSION')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          echo "gem version: $gem_version"
+          echo "tag version: $tag_version"
+          if [ "$gem_version" != "$tag_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match ZSV::VERSION ($gem_version)"
+            exit 1
+          fi
+
+      # Builds the gem and pushes it to RubyGems via OIDC trusted publishing.
+      # No API key secret is required once the trusted publisher is configured
+      # on rubygems.org (see RELEASING.md).
+      - name: Publish to RubyGems
+        uses: rubygems/release-gem@v1
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Release $GITHUB_REF_NAME. See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." \
+            pkg/*.gem 2>/dev/null || \
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Release $GITHUB_REF_NAME. See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
