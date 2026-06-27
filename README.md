@@ -32,7 +32,7 @@ Or install directly:
 gem install zsv
 ```
 
-The gem will automatically download and compile zsv 1.3.0 during installation.
+The gem will automatically download and compile zsv 1.4.3 during installation.
 
 ## 🚀 Usage
 
@@ -304,9 +304,9 @@ The test suite includes:
 
 ## Compatibility
 
-- **Ruby**: 3.3+ required
+- **Ruby**: 3.3+ required (tested on 3.3, 3.4, 4.0)
 - **Platforms**: Linux, macOS (ARM and x86)
-- **ZSV**: Compiles against zsv 1.3.0
+- **ZSV**: Compiles against zsv 1.4.3
 
 ## 🤝 Contributing
 

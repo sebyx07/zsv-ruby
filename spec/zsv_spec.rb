@@ -3,7 +3,7 @@
 RSpec.describe ZSV do
   it 'has a version number' do
     expect(ZSV::VERSION).not_to be nil
-    expect(ZSV::VERSION).to eq('1.3.1')
+    expect(ZSV::VERSION).to eq('1.4.3')
   end
 
   describe '.parse' do

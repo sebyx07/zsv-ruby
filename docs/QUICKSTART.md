@@ -10,7 +10,7 @@ cd zsv-ruby
 # Install dependencies
 bundle install
 
-# Compile the extension (downloads zsv 1.3.0 automatically)
+# Compile the extension (downloads zsv 1.4.3 automatically)
 bundle exec rake compile
 
 # Run tests
@@ -20,7 +20,7 @@ bundle exec rake spec
 ## Build from Scratch
 
 The gem will automatically:
-1. Download zsv 1.3.0 source from GitHub
+1. Download zsv 1.4.3 source from GitHub
 2. Configure and compile zsv library
 3. Build the Ruby extension
 4. Link everything together

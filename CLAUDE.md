@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-zsv-ruby: SIMD-accelerated CSV parser gem that's 5-6x faster than Ruby's CSV stdlib. Native C extension wrapping zsv 1.3.0 library. Compiles against zsv 1.3.0, version numbers stay in sync.
+zsv-ruby: SIMD-accelerated CSV parser gem that's 5-6x faster than Ruby's CSV stdlib. Native C extension wrapping zsv 1.4.3 library. Compiles against zsv 1.4.3, version numbers stay in sync.
 
 ## Essential Commands
 
@@ -76,11 +76,11 @@ ext/zsv/
 ## Build System
 
 **extconf.rb downloads zsv at compile time**:
-1. Downloads zsv 1.3.0 tarball using Ruby Net::HTTP (no system curl)
+1. Downloads zsv 1.4.3 tarball using Ruby Net::HTTP (no system curl)
 2. Extracts to `ext/zsv/vendor/` (gitignored)
 3. Runs `./configure && make -C src build`
 4. Links against `build/Linux/rel/gcc/lib/libzsv.a`
-5. Flags: `-O3` for performance, `-I vendor/zsv-1.3.0/include`
+5. Flags: `-O3` for performance, `-I vendor/zsv-1.4.3/include`
 
 ## Testing Strategy
 
