@@ -9,7 +9,7 @@ require 'zlib'
 require 'openssl'
 
 # ZSV version to compile against
-ZSV_VERSION = '1.3.0' # zsv C library version (not gem version)
+ZSV_VERSION = '1.4.3' # zsv C library version (not gem version)
 ZSV_URL = "https://github.com/liquidaty/zsv/archive/refs/tags/v#{ZSV_VERSION}.tar.gz".freeze
 # Use absolute path relative to the original extconf.rb location
 EXTCONF_DIR = File.expand_path(__dir__)
