@@ -112,3 +112,7 @@ ext/zsv/
 - Tests: `spec/zsv_spec.rb` (one file, all tests)
 - Examples: `examples/basic_usage.rb`, `examples/performance_comparison.rb`
 - Benchmarks: `benchmark/parse_bench.rb`, `benchmark/memory_bench.rb`
+
+## Note
+
+Do not use git worktrees — work directly in this checkout. See `.claude/commands/feature.md` and `.claude/commands/planx.md`.
