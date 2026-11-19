@@ -203,7 +203,7 @@ static VALUE rb_zsv_foreach(int argc, VALUE *argv, VALUE klass)
 
     /* Ensure cleanup even if exception occurs */
     int state;
-    rb_protect((VALUE(*)(VALUE))rb_zsv_parser_each, parser_obj, &state);
+    rb_protect(rb_zsv_parser_each, parser_obj, &state);
 
     zsv_parser_close(parser);
 
