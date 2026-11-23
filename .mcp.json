@@ -9,6 +9,22 @@
         "CODEGRAPH_TELEMETRY": "0",
         "CODEGRAPH_NO_UPDATE_CHECK": "1"
       }
+    },
+    "sentry-mcp": {
+      "type": "stdio",
+      "command": "bunx",
+      "args": ["@sentry/mcp-server@0.49.0"],
+      "env": {
+        "SENTRY_ACCESS_TOKEN": "${SENTRY_ACCESS_TOKEN}",
+        "SENTRY_HOST": "${SENTRY_HOST}"
+      }
+    },
+    "developerz": {
+      "type": "http",
+      "url": "https://mcp.developerz.ai/v1/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DEVELOPERZ_API_KEY}"
+      }
     }
   }
 }
