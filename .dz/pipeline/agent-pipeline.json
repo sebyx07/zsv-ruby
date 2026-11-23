@@ -1,0 +1,10 @@
+{
+  "repo": "sebyx07/zsv-ruby",
+  "merge": {
+    "reviewGate": "ci-only",
+    "standingAuthorization": true
+  },
+  "policy": {
+    "defaultTier": "GREEN"
+  }
+}

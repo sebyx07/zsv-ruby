@@ -1,9 +1,15 @@
 # frozen_string_literal: true
 
+require_relative 'api/csv_compat_helper'
+
 RSpec.describe ZSV do
-  it 'has a version number' do
-    expect(ZSV::VERSION).not_to be nil
-    expect(ZSV::VERSION).to eq('1.4.3')
+  # Same rule as bin/repo-guards: the gem's X.Y.Z equals the pin, or trails it between a zsv
+  # upgrade and its release; it is never ahead of the pin.
+  it 'is never ahead of the zsv release it wraps' do
+    upstream = File.read(File.expand_path('../ext/zsv/ZSV_UPSTREAM', __dir__))[/^version=(\S+)/, 1]
+    gem_base = ZSV::VERSION.split('.').first(3).join('.')
+
+    expect(Gem::Version.new(gem_base)).to be <= Gem::Version.new(upstream)
   end
 
   describe '.parse' do

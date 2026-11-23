@@ -1,96 +1,101 @@
 # frozen_string_literal: true
 
-require 'bundler/setup'
-require 'csv'
-require 'zsv'
-require 'tempfile'
+# Memory use of ZSV against Ruby's CSV, on a fixed generated dataset.
+#
+#   bundle exec ruby benchmark/memory_bench.rb
+#
+# BENCH_JSON=memory.json also writes the numbers to benchmark/results/memory.json.
+#
+# Every measurement runs in its own forked process, so neither parser inherits
+# the heap the other one grew (needs fork: Linux or macOS). Reported per scenario:
+#
+#   peak RSS      growth of the process high-water mark while parsing
+#   allocations   Ruby objects allocated (GC.stat total_allocated_objects)
+#   retained      Ruby heap slots still live after a full GC with the rows held
+#
+# "streaming" drops every row; "holding" keeps all rows in an Array.
 
-# Create large test file
-def create_large_file(rows: 100_000)
-  file = Tempfile.new(['memory_bench', '.csv'])
+require_relative 'support'
 
-  file.puts('id,name,email,age,city')
-  rows.times do |i|
-    file.puts("#{i},User#{i},user#{i}@example.com,#{20 + (i % 50)},City#{i % 100}")
-  end
+SCENARIOS = {
+  'streaming' => {
+    'CSV.foreach' => ->(path) { CSV.foreach(path) { |row| row } },
+    'ZSV.foreach' => ->(path) { ZSV.foreach(path) { |row| row } }
+  },
+  'holding all rows' => {
+    'CSV.read' => ->(path) { CSV.read(path) },
+    'ZSV.read' => ->(path) { ZSV.read(path) }
+  },
+  'holding all rows, headers: true' => {
+    'CSV.read' => ->(path) { CSV.read(path, headers: true) },
+    'ZSV.read' => ->(path) { ZSV.read(path, headers: true) }
+  }
+}.freeze
 
-  file.close
-  file
+# Peak resident set size of this process in kilobytes
+def peak_rss_kb
+  status = File.read('/proc/self/status')
+  Integer(status[/^VmHWM:\s+(\d+)/, 1])
+rescue SystemCallError
+  # No /proc (macOS): ru_maxrss is in bytes there
+  Process.respond_to?(:getrusage) ? Process.getrusage.maxrss / 1024 : `ps -o rss= -p #{Process.pid}`.to_i
 end
 
-# Measure memory when holding all rows
-def measure_memory_holding_rows(file_path, parser)
+def measure(path, work)
+  work.call(BenchSupport.dataset(:small)) # load the parser's code before measuring
   GC.start(full_mark: true, immediate_sweep: true)
-  before = `ps -o rss= -p #{Process.pid}`.to_i
+  rss_before = peak_rss_kb
+  allocated_before = GC.stat(:total_allocated_objects)
+  live_before = GC.stat(:heap_live_slots)
 
-  rows = []
-  if parser == :csv
-    CSV.foreach(file_path) { |row| rows << row }
-  else
-    ZSV.foreach(file_path) { |row| rows << row }
-  end
+  result = work.call(path)
 
+  allocations = GC.stat(:total_allocated_objects) - allocated_before
+  peak_rss_kb_growth = peak_rss_kb - rss_before
   GC.start(full_mark: true, immediate_sweep: true)
-  after = `ps -o rss= -p #{Process.pid}`.to_i
+  retained = result ? GC.stat(:heap_live_slots) - live_before : 0
 
-  [rows.size, (after - before) / 1024.0]
+  { peak_rss_mb: (peak_rss_kb_growth / 1024.0).round(1), allocations: allocations, retained_slots: retained }
 end
 
-# Count string allocations during streaming
-def count_string_allocations(file_path, parser)
-  GC.start
-  GC.disable
-
-  before_count = ObjectSpace.count_objects[:T_STRING]
-
-  if parser == :csv
-    CSV.foreach(file_path) { |_| nil }
-  else
-    ZSV.foreach(file_path) { |_| nil }
+# Runs the measurement in a child process and returns its numbers
+def measure_isolated(path, work)
+  reader, writer = IO.pipe
+  pid = fork do
+    reader.close
+    writer.write(JSON.generate(measure(path, work)))
+    writer.close
+    exit!(0)
   end
+  writer.close
+  output = reader.read
+  Process.wait(pid)
+  abort 'measurement process failed' unless $?.success? # rubocop:disable Style/SpecialGlobalVars
 
-  after_count = ObjectSpace.count_objects[:T_STRING]
-  GC.enable
-
-  after_count - before_count
+  JSON.parse(output, symbolize_names: true)
 end
 
-puts 'Creating test data (100K rows)...'
-tempfile = create_large_file
-test_file = tempfile.path
+path = BenchSupport.dataset(:plain)
 
-puts "\n=== Memory Usage (Holding All Rows) ==="
+BenchSupport.print_environment
+puts BenchSupport.describe_dataset(:plain)
+# Checked in a child as well: a fork inherits the high-water mark of its
+# parent, so the parent must not parse the dataset itself.
+checker = fork { exit!(BenchSupport.same_rows?(path) ? 0 : 1) }
+Process.wait(checker)
+abort 'ZSV and CSV disagree on the dataset: the comparison would be meaningless' unless $?.success? # rubocop:disable Style/SpecialGlobalVars
+puts
 
-csv_count, csv_memory = measure_memory_holding_rows(test_file, :csv)
-puts "CSV stdlib: #{csv_count} rows, #{csv_memory.round(1)} MB"
-
-# Force cleanup between tests
-GC.start(full_mark: true, immediate_sweep: true)
-sleep 0.1
-
-zsv_count, zsv_memory = measure_memory_holding_rows(test_file, :zsv)
-puts "ZSV:        #{zsv_count} rows, #{zsv_memory.round(1)} MB"
-
-if csv_memory.positive? && zsv_memory.positive?
-  savings = ((1 - (zsv_memory / csv_memory)) * 100).round(1)
-  puts "\nMemory savings: #{savings}%"
+results = []
+SCENARIOS.each do |scenario, parsers|
+  puts "=== #{scenario} ==="
+  parsers.each do |label, work|
+    numbers = measure_isolated(path, work)
+    results << { scenario: scenario, parser: label, **numbers }
+    puts format('%-12<label>s peak RSS +%7.1<peak_rss_mb>f MB  %10<allocations>d allocations  ' \
+                '%9<retained_slots>d retained slots', label: label, **numbers)
+  end
+  puts
 end
 
-puts "\n=== String Allocations (Streaming 10K rows) ==="
-tempfile_small = create_large_file(rows: 10_000)
-small_file = tempfile_small.path
-
-csv_allocs = count_string_allocations(small_file, :csv)
-GC.start
-zsv_allocs = count_string_allocations(small_file, :zsv)
-
-puts "CSV stdlib: #{csv_allocs} strings"
-puts "ZSV:        #{zsv_allocs} strings"
-
-if csv_allocs.positive? && zsv_allocs.positive?
-  reduction = ((1 - (zsv_allocs.to_f / csv_allocs)) * 100).round(1)
-  puts "\nAllocation reduction: #{reduction}%"
-end
-
-tempfile.unlink
-tempfile_small.unlink
+BenchSupport.write_json('memory', results)

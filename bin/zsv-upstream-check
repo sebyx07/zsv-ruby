@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Compares the zsv release pinned in ext/zsv/ZSV_UPSTREAM with upstream's latest release.
+# Read-only: it changes nothing. The monthly upstream-zsv job calls it.
+#
+#   bin/zsv-upstream-check
+#
+# Prints `pinned=X.Y.Z`, `latest=X.Y.Z` and, when an upgrade is available, the upgrade command.
+# Uses `gh` when installed (authenticated, higher rate limit), otherwise curl.
+#
+# Exit: 0 pinned is the latest release · 10 a newer release is available · 1 error.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+pin_file=ext/zsv/ZSV_UPSTREAM
+api_path=repos/liquidaty/zsv/releases/latest
+
+pinned=$(sed -n 's/^version=//p' "$pin_file" | head -1)
+if [ -z "$pinned" ]; then
+  echo "error: no version= line in $pin_file" >&2
+  exit 1
+fi
+
+if command -v gh >/dev/null 2>&1; then
+  tag=$(gh api "$api_path" --jq .tag_name)
+else
+  tag=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/$api_path" |
+    sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+fi
+latest=${tag#v}
+if ! [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: unexpected latest zsv release tag '$tag'" >&2
+  exit 1
+fi
+
+echo "pinned=$pinned"
+echo "latest=$latest"
+
+newest=$(printf '%s\n%s\n' "$pinned" "$latest" | sort -V | tail -1)
+if [ "$newest" = "$pinned" ]; then
+  echo "zsv $pinned is current."
+  exit 0
+fi
+
+echo "zsv $latest is available (pinned $pinned)."
+echo "Upgrade: bundle exec rake \"zsv:bump[$latest]\""
+echo "Release notes: https://github.com/liquidaty/zsv/releases/tag/v$latest"
+exit 10

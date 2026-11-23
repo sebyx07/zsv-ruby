@@ -1,0 +1,7 @@
+# The zsv C library release this gem is built from (gem X.Y.Z wraps zsv X.Y.Z).
+# Read by ext/zsv/upstream.rb (Rakefile, extconf.rb) and bin/zsv-upstream-check.
+#
+# To upgrade: `bundle exec rake "zsv:bump[NEW_VERSION]"`, which rewrites this
+# file with the new tarball's SHA-256 and re-vendors ext/zsv/vendor/zsv.
+version=1.4.4
+sha256=99486b6901d6b576bf15afceb0bcc888ceeb3f555a6d489547eefe67eff52079

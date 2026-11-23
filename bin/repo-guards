@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Repository guards that need no Ruby and no compiler. bin/check runs them, and so does CI.
+#
+#   1. Parity: .github/workflows/ci.yml still runs the full bin/check and this script, and
+#      bin/check still runs this script. Otherwise "green locally" stops meaning "green in CI"
+#      without anyone noticing.
+#   2. Agent surface: the files an agent reads as instructions (CLAUDE.md, nested CLAUDE.md,
+#      AGENTS.md, .claude/, .dz/, llms.txt, .mcp.json) carry no zero-width or bidi control
+#      characters and no HTML comments (both invisible in review, both read by the model);
+#      committed JSON settings set neither ANTHROPIC_BASE_URL nor enableAllProjectMcpServers;
+#      AGENTS.md is a symlink to CLAUDE.md.
+#   3. Size: the root CLAUDE.md and .dz/maintainer/reviewer.md each stay under 12,000
+#      characters (the developerz.ai loader cuts the rest). Move detail into a nested
+#      CLAUDE.md; never raise the cap.
+#   4. Version sync: gem X.Y.Z wraps zsv X.Y.Z. The first three segments of ZSV::VERSION
+#      (lib/zsv/version.rb) equal the pin in ext/zsv/ZSV_UPSTREAM; a gem-only release appends a
+#      fourth segment (X.Y.Z.N). The pin may be ahead of the gem (a zsv upgrade is merged, its
+#      release is not cut yet); the gem is never ahead of the pin.
+#
+# Exit: 0 clean · 1 a guard failed (each failure names the file and the fix).
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+export LC_ALL=C.UTF-8
+
+MAX_CHARS=12000
+ci=.github/workflows/ci.yml
+failures=0
+
+fail() {
+  printf '✗ %s\n' "$1"
+  [ "$#" -lt 2 ] || printf '%s\n' "$2" | sed 's/^/    /'
+  failures=$((failures + 1))
+}
+
+# uncommented <file> — the file without its comment-only lines.
+uncommented() { grep -vE '^[[:space:]]*#' "$1"; }
+
+# Reads all of its input (unlike grep -q), so the writer never dies of SIGPIPE
+# and trips pipefail: true when a line matches the extended regex $1.
+matches() { [ "$(grep -cE "$1")" -gt 0 ]; }
+
+# 1. Parity. `bin/check` must end the command: `bin/check fast` or `files` is not the gate.
+if [ -f "$ci" ]; then
+  uncommented "$ci" | matches '(^|[[:space:]])bin/check[[:space:]]*$' ||
+    fail "$ci no longer runs the full bin/check" "CI must run the local gate: restore a step whose command ends in 'bin/check'."
+  uncommented "$ci" | matches '(^|[[:space:]])bin/repo-guards[[:space:]]*$' ||
+    fail "$ci no longer runs bin/repo-guards" "Restore a step whose command ends in 'bin/repo-guards'."
+else
+  fail "$ci is missing" "The gate needs a CI workflow that runs bin/check."
+fi
+uncommented bin/check | matches '(^|[[:space:]])bin/repo-guards[[:space:]]*$' ||
+  fail "bin/check no longer runs bin/repo-guards" "Restore the 'run_step guards bin/repo-guards' lines."
+
+# 2. Agent surface: tracked and untracked files, minus what .gitignore excludes.
+mapfile -t surface < <(git ls-files --cached --others --exclude-standard -- \
+  CLAUDE.md '*/CLAUDE.md' AGENTS.md '.claude/*' '.dz/*' llms.txt 'llms-*.txt' .mcp.json |
+  grep -v '^ext/zsv/vendor/' | sort -u)
+existing=()
+for path in "${surface[@]}"; do [ -f "$path" ] && existing+=("$path"); done
+[ "${#existing[@]}" -gt 0 ] || fail "no agent-surface file found" "CLAUDE.md is missing, or this is not a git checkout."
+
+if [ "${#existing[@]}" -gt 0 ]; then
+  hits=$(grep -nP '[\x{200B}-\x{200D}\x{2060}\x{FEFF}\x{202A}-\x{202E}\x{2066}-\x{2069}]' "${existing[@]}" /dev/null | cut -c1-160)
+  [ -z "$hits" ] || fail "zero-width or bidi control character in a file agents read" "$hits"
+
+  hits=$(grep -nF '<!--' "${existing[@]}" /dev/null | cut -c1-160)
+  [ -z "$hits" ] || fail "HTML comment in a file agents read (write it as visible text, or delete it)" "$hits"
+
+  settings=()
+  for path in "${existing[@]}"; do case "$path" in *.json) settings+=("$path") ;; esac; done
+  if [ "${#settings[@]}" -gt 0 ]; then
+    hits=$(grep -nE 'ANTHROPIC_BASE_URL|enableAllProjectMcpServers' "${settings[@]}" /dev/null | cut -c1-160)
+    [ -z "$hits" ] || fail "committed settings reroute the API or auto-start every MCP server" "$hits"
+  fi
+fi
+
+if [ -e AGENTS.md ] || [ -L AGENTS.md ]; then
+  [ "$(readlink AGENTS.md 2>/dev/null)" = CLAUDE.md ] ||
+    fail "AGENTS.md is not a symlink to CLAUDE.md" "rm AGENTS.md && ln -s CLAUDE.md AGENTS.md (one instructions file, two names)."
+fi
+
+# 3. Size.
+for capped in CLAUDE.md .dz/maintainer/reviewer.md; do
+  [ -f "$capped" ] || continue
+  chars=$(wc -m <"$capped")
+  [ "$chars" -lt "$MAX_CHARS" ] ||
+    fail "$capped is $chars characters; the limit is under $MAX_CHARS" "Move detail into ext/, spec/ or .github/CLAUDE.md (or cut it)."
+done
+
+# 4. Version sync.
+gem_version=$(sed -n "s/.*VERSION = '\([^']*\)'.*/\1/p" lib/zsv/version.rb | head -1)
+zsv_version=$(sed -n 's/^version=//p' ext/zsv/ZSV_UPSTREAM 2>/dev/null | head -1)
+if [ -z "$gem_version" ] || [ -z "$zsv_version" ]; then
+  fail "could not read the gem version or the zsv pin" "lib/zsv/version.rb must hold VERSION = 'X.Y.Z' and ext/zsv/ZSV_UPSTREAM must hold a version=X.Y.Z line."
+else
+  gem_base=$(printf '%s' "$gem_version" | cut -d. -f1-3)
+  newest=$(printf '%s\n%s\n' "$gem_base" "$zsv_version" | sort -V | tail -1)
+  if [ "$gem_base" = "$zsv_version" ]; then
+    sync_note="gem $gem_version wraps zsv $zsv_version"
+  elif [ "$newest" = "$zsv_version" ]; then
+    sync_note="gem $gem_version, zsv $zsv_version pinned: the next release is $zsv_version"
+  else
+    fail "gem version $gem_version is ahead of the pinned zsv $zsv_version" "The gem version mirrors the vendored zsv: release $zsv_version, or $zsv_version.N for a gem-only release. Upgrade zsv with skill upgrade-zsv, never by editing version.rb."
+  fi
+fi
+
+if [ "$failures" -gt 0 ]; then
+  printf '\nbin/repo-guards: FAILED (%s)\n' "$failures"
+  exit 1
+fi
+printf 'bin/repo-guards: ok (%s agent-surface files, CLAUDE.md %s chars, %s)\n' \
+  "${#existing[@]}" "$(wc -m <CLAUDE.md)" "$sync_note"

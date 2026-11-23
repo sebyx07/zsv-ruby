@@ -1,0 +1,136 @@
+# zsv
+
+> Ruby gem: a fast CSV **parser** with the reading API of Ruby's `CSV` standard library (`ZSV.foreach`, `ZSV.parse`, `ZSV.read`, `ZSV.open`, `ZSV::Parser`). Parsing is done in C by the SIMD-accelerated zsv library (github.com/liquidaty/zsv) through a native extension. Rows are Arrays of frozen Strings, or Hashes with `headers:`. It only reads: no CSV writing, no converters, no `CSV::Table`. Lenient by default; `liberal_parsing: false` validates like `CSV`.
+
+Install: `gem 'zsv'`, `require 'zsv'`. CRuby only (floor: `required_ruby_version` in zsv.gemspec). Precompiled gems for Linux (x86_64, aarch64; glibc and musl) and macOS (x86_64, arm64) from 1.4.4 on; elsewhere it compiles on install (C compiler + make, no network: the zsv source ships in the gem). No Windows. No runtime dependencies. MIT. Gem version X.Y.Z wraps zsv X.Y.Z (gem-only releases: X.Y.Z.N). Source: https://github.com/sebyx07/zsv-ruby. Full reference: docs/API_REFERENCE.md. Maintained by developerz.ai (AI maintainer agent: triage, review, merges, zsv upgrades, releases).
+
+## Rules for agents
+
+1. Rows are `Array<String>`; with `headers:` they are plain `Hash`es (`row['name']`), never `CSV::Row`. Do not call `CSV::Row` / `CSV::Table` methods (`row.fields`, `row.to_h`, `table.by_col`) on them.
+2. An empty unquoted field is `""`, not `nil`. Code ported from `CSV` that tests `field.nil?` must test `field.empty?`. A row shorter than the headers has `nil` for the missing keys.
+3. Field Strings are frozen. `field.strip!`, `field << x`, `field.force_encoding` raise `FrozenError`: use the non-bang form or `+field`.
+4. The default is lenient: malformed input never raises. Pass `liberal_parsing: false` when the input must be valid CSV (it raises `ZSV::MalformedCSVError` like `CSV`, before any row is yielded).
+5. Stream large files with `ZSV.foreach(path) { |row| }`. `ZSV.read` / `ZSV.parse` hold every row in memory.
+6. Unsupported options raise `ArgumentError` (`converters`, `header_converters`, `skip_blanks`, `strip`, `nil_value`, `return_headers`, custom `quote_char` or `row_sep`, a multi-character `col_sep`). Do not rescue it: convert values in Ruby (`row['age'].to_i`), or use `CSV` for that file.
+7. To write CSV, use Ruby's `CSV`. `ZSV.open(path, 'w')` raises `ArgumentError`.
+8. Close what you open: use the block forms (`ZSV.foreach`, `ZSV.open(path) { |csv| }`), or `parser.close` in `ensure`.
+9. Do not quote a speedup figure for this gem from memory. Numbers depend on data shape and CPU; run `bundle exec rake bench` in the repo or read the latest "Benchmarks" workflow run.
+
+## API
+
+```ruby
+require 'zsv'
+
+# Module methods
+ZSV.foreach(path, mode = 'r', **options) { |row| }  # => nil; without a block an Enumerator (with_index, lazy, ...)
+ZSV.read(path, **options)                           # => Array of rows
+ZSV.parse(string, **options)                        # => Array of rows; string must be a String
+ZSV.parse_line(string, **options)                   # => first row, or nil for ''
+ZSV.parse_enum(source, **options)                   # => Enumerator, rows parsed as consumed
+ZSV.open(path, mode = 'r', **options)               # => ZSV::Parser
+ZSV.open(path, **options) { |parser| }              # => block value; parser closed afterwards, also on raise
+ZSV.new(source, **options)                          # => ZSV::Parser.new(source, **options)
+
+# ZSV::Parser (includes Enumerable)
+ZSV::Parser.new(source, **options)                  # source: CSV data, a path, a Pathname, or an object with #read
+ZSV::Parser.from_string(csv, **options)             # always data, never a path
+ZSV::Parser.from_path(path, **options)              # always a path
+parser.shift        # => next row, or nil at the end (and after close)
+parser.each { |row| }   # => self; without a block an Enumerator. Alias: each_row
+parser.read         # => remaining rows. Alias: to_a
+parser.headers      # => Array of header names, or nil (no headers, or headers: true before the first row was read)
+parser.rewind       # back to the first row
+parser.close        # => nil; idempotent
+parser.closed?
+```
+
+`path` is a String or anything with `#to_path`. `mode` accepts read modes only (`'r'`, `'rb'`, `'r:bom|utf-8'`).
+
+`ZSV::Parser.new(string)` guesses: a String containing a line ending is CSV data; otherwise it is a path if that file exists; otherwise data if it contains the column separator; otherwise a (missing) path, raising `Errno::ENOENT`. When the kind is known, use `from_string` / `from_path` or `ZSV.parse` / `ZSV.open`. An IO source is read to its end.
+
+## Options
+
+All methods take the same keyword options. Anything else raises `ArgumentError`.
+
+| Option | Default | Accepts |
+|---|---|---|
+| `headers` | `false` | `true` (or `:first_row`): the first row names the fields. An `Array`, or a String holding one CSV line: your own names, and the first row is data |
+| `col_sep` | `","` | one ASCII character, not `"` or a line ending |
+| `skip_lines` | `0` | non-negative Integer: number of leading rows to drop (before the header row). Not a pattern |
+| `liberal_parsing` | lenient | `false`: validate like `CSV` and raise `ZSV::MalformedCSVError` / `ZSV::InvalidEncodingError`. `true` or unset: never raise on malformed quoting |
+| `encoding` | the String's encoding for `parse`; UTF-8 for files | an `Encoding` or its name (`'bom|utf-8'` accepted). Labels the fields; never transcodes. Files need an ASCII-compatible encoding |
+| `quote_char` | `'"'` | only `'"'` |
+| `row_sep` | `:auto` | `:auto`, `"\n"`, `"\r\n"`, `"\r"`: line endings are always auto-detected |
+| `max_columns` | 1024 | Integer: a wider row raises `ZSV::MalformedCSVError` (zsv would otherwise drop the extra fields) |
+| `max_row_size` | 262144 | Integer, bytes (raw, without the line ending): a longer row raises `ZSV::MalformedCSVError` with its line number, never returned cut short. Set it above the longest row for data with very long fields; the buffer grows to hold it |
+| `buffer_size` | 262144 | positive Integer, bytes read per chunk. Does not change results |
+
+## Differences from Ruby's CSV
+
+Rows are compared with `CSV`'s in the test suite; these differences are intended.
+
+- Lenient by default (`CSV` raises by default). In lenient mode a quote inside an unquoted field is kept, and an unclosed quoted field runs to the end of the input.
+- Empty unquoted field: `""` (CSV: `nil`). Empty quoted field: `""` in both.
+- Blank line: `[]`, as in `CSV`.
+- With headers: `Hash` rows; duplicate header names keep the first value (like `CSV::Row#to_h`); fields beyond the header row are keyed by their Integer column index (CSV: under `nil`).
+- `liberal_parsing: false` raises before the first row is yielded (CSV: on reaching the bad row).
+- `shift` / `each` on a closed parser return `nil` / no rows (CSV: `IOError`).
+- Fields are frozen Strings.
+- A leading UTF-8 BOM is always stripped.
+- `col_sep` one ASCII character; `quote_char` only `"`; `row_sep` auto only; `skip_lines` is a count; `encoding` does not transcode.
+- No converters, no `CSV::Table`, no writing, no `unconverted_fields`, no `field_size_limit` (use `max_row_size` / `max_columns`).
+
+## Errors
+
+- `ZSV::Error < StandardError`: base class; also raised when a parser is used from inside its own callback or from two threads at once.
+- `ZSV::MalformedCSVError < ZSV::Error`: malformed input with `liberal_parsing: false` (message ends `in line N.`, `#line_number` / `#lineno`), a row wider than `max_columns` or longer than `max_row_size`.
+- `ZSV::InvalidEncodingError < ZSV::Error`: bytes invalid in the encoding, with `liberal_parsing: false`.
+- `ArgumentError`: unknown or unsupported option or value, a write mode. Raised before any file is opened.
+- `TypeError`: `ZSV.parse(non_string)`, an unsupported source object.
+- `Errno::ENOENT` and friends: file errors, unchanged. `IOError`: `rewind` on a closed parser.
+
+## Recipes
+
+```ruby
+# Stream a large file with headers
+ZSV.foreach('users.csv', headers: true) do |row|
+  User.create!(name: row['name'], age: row['age'].to_i)   # convert yourself
+end
+
+# Batches
+ZSV.foreach('big.csv', headers: true).each_slice(1_000) { |rows| Model.insert_all(rows) }
+
+# TSV
+ZSV.read('data.tsv', col_sep: "\t")
+
+# Skip a preamble, then use the header row
+ZSV.foreach('report.csv', skip_lines: 2, headers: true) { |row| }
+
+# Reject malformed files
+begin
+  ZSV.foreach(path, liberal_parsing: false) { |row| }
+rescue ZSV::MalformedCSVError => e
+  warn "bad CSV at line #{e.line_number}: #{e.message}"
+end
+
+# An upload or a socket: anything with #read
+ZSV::Parser.new(io, headers: true).each { |row| }
+
+# Symbol keys
+ZSV.foreach(path, headers: true) { |row| row.transform_keys(&:to_sym) }
+
+# nil for empty fields, as CSV returns
+ZSV.foreach(path) { |row| row.map { |f| f.empty? ? nil : f } }   # note: also maps quoted "" to nil
+```
+
+## Pitfalls
+
+- `parser.headers` is `nil` until the first `shift` when `headers: true`.
+- `ZSV::Parser.new('a,b')` is data only because it contains the separator and no such file exists; never pass user-controlled Strings to `Parser.new` (it may open a file): use `ZSV.parse` / `Parser.from_string`.
+- Every build (precompiled or source) targets the baseline CPU (SSE2 / NEON), so a binary built on one machine runs on another of the same architecture. `gem install zsv --platform ruby -- --enable-native` (or `ZSV_NATIVE=1`) builds for the build machine's CPU (`-march=native`) instead, for code that only runs where it was built.
+- A parser is not thread-safe: one parser, one thread. Separate parsers on separate threads are fine (the GVL is held while parsing).
+- Returning a row and mutating its Strings fails (frozen); mutating the Array or Hash itself is fine.
+
+## Working on the gem itself
+
+Agent instructions: `CLAUDE.md` (invariants, commands, release lane) and `ext/CLAUDE.md` (C extension rules). Gate: `bin/setup`, then `bin/check`; C changes also `bin/check asan`.

@@ -1,0 +1,90 @@
+name: Canary
+
+# Monthly look ahead: Ruby head, the zsv C library ahead of the pin (its newest
+# release and its main branch), and the precompiled platform gems. Not part of
+# "CI OK", so an upstream break never blocks a pull request; the developerz.ai
+# monthly checkup reads the latest run and fixes what it finds (or pins the new
+# zsv with `rake "zsv:bump[X.Y.Z]"`) before a release ships it.
+on:
+  schedule:
+    - cron: '0 4 1 * *' # 04:00 UTC on the 1st
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: '1'
+
+jobs:
+  ruby-head:
+    name: Canary / Ruby head · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: head
+          bundler-cache: true
+      - run: ruby -v
+      - name: Compile the extension
+        run: bundle exec rake compile
+      - name: RSpec
+        run: bundle exec rspec
+
+  zsv-upstream:
+    name: Canary / zsv ${{ matrix.ref }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [latest-release, main]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - name: Vendor zsv ${{ matrix.ref }} in place of the pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ matrix.ref }}
+        run: .github/scripts/vendor-zsv-ref.sh "$REF"
+      - name: Compile the extension against it
+        run: bundle exec rake compile
+      - name: RSpec
+        run: bundle exec rspec
+
+  # An unpinned upstream under the sanitizers: memory errors zsv introduces
+  # show up here, not in a user's process.
+  zsv-main-sanitizers:
+    name: Canary / zsv main · ASan + UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - name: Vendor zsv main in place of the pin
+        run: .github/scripts/vendor-zsv-ref.sh main
+      - name: bin/check asan against it
+        run: bin/check asan
+
+  native-gems:
+    name: Canary / precompiled gems
+    uses: ./.github/workflows/native-gems.yml

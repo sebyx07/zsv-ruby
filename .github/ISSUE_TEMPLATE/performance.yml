@@ -1,0 +1,43 @@
+name: Performance report
+description: A regression, or a case where the gem is slower or heavier than expected, with numbers.
+labels: ["performance"]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: Benchmark script and input shape
+      description: A script that runs as is (benchmark-ips preferred), and the input - rows, columns, field sizes, quoting. `bundle exec rake bench` output is welcome too.
+      render: ruby
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Results
+      description: The full output, including the comparison (Ruby's CSV, or an earlier zsv gem version).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What you expected and why (an earlier version's numbers, the CI benchmark run, the README).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: zsv gem version
+      description: "Output of: gem list zsv (with the platform suffix, if any)"
+      placeholder: "x.y.z"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: "ruby -v (and whether YJIT is on), OS, CPU model and architecture"
+      placeholder: "ruby 3.4.x +YJIT, Ubuntu 24.04, AMD Ryzen 9 7950X (x86_64)"
+    validations:
+      required: true

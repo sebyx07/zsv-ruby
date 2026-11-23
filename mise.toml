@@ -1,2 +1,5 @@
+# Toolchain. .ruby-version is the single source of the Ruby pin (CI reads it too); the [tools]
+# template below reads it, so editing that file alone changes the version `mise install` installs.
+# Never put a version literal here.
 [tools]
-ruby = "4.0.10"
+ruby = "{{ read_file(path='.ruby-version') | trim }}"

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Fresh clone -> ready to run bin/check. Idempotent: run it any time (after a pull, after a
+# Gemfile or gemspec change, when bin/check exits 75).
+#
+#   bin/setup
+#
+# 1. Ruby from .ruby-version (mise, else rbenv)
+# 2. gems (bundle install)
+# 3. the C extension: `bundle exec rake compile` builds the vendored zsv library and the
+#    extension into lib/zsv/. No network: the zsv source is committed under ext/zsv/vendor/.
+#
+# Exit 75 = a prerequisite is missing (a Ruby manager, a C compiler, make); the message says
+# what to install. Any other non-zero exit = a step ran and failed (the compile, usually).
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_dx.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_dx.sh"
+cd "$ROOT" || exit 1
+
+step "Ruby ($(tr -d '[:space:]' <.ruby-version), from .ruby-version)"
+use_ruby install
+ok "$(ruby -v)"
+
+step "C toolchain"
+require_toolchain
+ok "$(ruby -e 'print RbConfig::CONFIG["CC"]') and make present"
+command -v clang-format >/dev/null 2>&1 ||
+  printf '  ! clang-format is not installed: bin/check cannot grade C formatting (CI does).\n'
+
+step "Gems"
+bundle check >/dev/null 2>&1 || bundle install
+ok "bundle installed"
+
+step "C extension (bundle exec rake compile)"
+bundle exec rake compile
+extension_built || { echo "rake compile succeeded but lib/zsv/zsv.{so,bundle} is missing" >&2; exit 1; }
+ok "extension built in lib/zsv/"
+
+cat <<TXT
+
+Ready. Next steps:
+  bin/check fast    inner loop: lint on changed files + compile + specs not tagged :slow
+  bin/check         the pre-PR gate, same as CI: lint + compile + full rspec
+  bin/console       IRB with ZSV loaded from this checkout
+  bundle exec rake bench    benchmarks against the CSV stdlib
+TXT

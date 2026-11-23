@@ -1,0 +1,164 @@
+name: Native gems
+
+# Builds every gem a release pushes: the source gem (`rake build`, compiles on
+# install) and one precompiled gem per platform (`rake gem:native:<platform>`,
+# rake-compiler-dock). Each precompiled gem is installed on a runner of its own
+# platform, for every supported Ruby, and must load and parse without compiling.
+#
+# release.yml calls this (workflow_call) and pushes the uploaded gem-* artifacts;
+# canary.yml calls it monthly so a broken cross-build shows up before a release.
+# The platform list is read from the Rakefile (NATIVE_PLATFORMS), never repeated
+# here; only the runner used to smoke-test each platform is mapped below.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: '1'
+
+jobs:
+  plan:
+    name: Native gems / plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      platforms: ${{ steps.plan.outputs.platforms }}
+      smoke: ${{ steps.plan.outputs.smoke }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No dependency cache anywhere in this workflow: its gems get published.
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+      - run: bundle install --jobs 4
+      - id: plan
+        run: |
+          mapfile -t platforms < <(bundle exec rake -T gem:native: | sed -nE 's/^rake gem:native:([^ ]+).*/\1/p')
+          if [ "${#platforms[@]}" -eq 0 ]; then
+            echo "::error::The Rakefile defines no gem:native:<platform> tasks (NATIVE_PLATFORMS)."
+            exit 1
+          fi
+          # Supported Rubies: the minors the fat gems carry binaries for.
+          rubies=('3.3' '3.4' '4.0')
+          smoke=()
+          for p in "${platforms[@]}"; do
+            case "$p" in
+              x86_64-linux-gnu)  runner=ubuntu-24.04;     image='' ;;
+              aarch64-linux-gnu) runner=ubuntu-24.04-arm; image='' ;;
+              x86_64-linux-musl) runner=ubuntu-24.04;     image=alpine ;;
+              aarch64-linux-musl) runner=ubuntu-24.04-arm; image=alpine ;;
+              x86_64-darwin)     runner=macos-15-intel;   image='' ;;
+              arm64-darwin)      runner=macos-latest;     image='' ;;
+              *)
+                echo "::error::No smoke-test runner for platform $p: add it to the case in .github/workflows/native-gems.yml (plan job)."
+                exit 1 ;;
+            esac
+            for r in "${rubies[@]}"; do
+              smoke+=("$(jq -cn --arg p "$p" --arg runner "$runner" --arg image "$image" --arg ruby "$r" \
+                '{platform: $p, runner: $runner, image: $image, ruby: $ruby}')")
+            done
+          done
+          platforms_json=$(printf '%s\n' "${platforms[@]}" | jq -cR . | jq -cs .)
+          smoke_json=$(printf '%s\n' "${smoke[@]}" | jq -cs '{include: .}')
+          echo "platforms: $platforms_json"
+          {
+            echo "platforms=$platforms_json"
+            echo "smoke=$smoke_json"
+          } >> "$GITHUB_OUTPUT"
+
+  source:
+    name: Native gems / source gem
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+      - run: bundle install --jobs 4
+      - name: Build the source gem
+        run: bundle exec rake build
+      - name: It installs with the network disabled, loads and parses
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare -rn ruby .github/scripts/gem-smoke.rb pkg/zsv-*.gem
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gem-ruby
+          path: pkg/zsv-*.gem
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Native gems / build ${{ matrix.platform }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.plan.outputs.platforms) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+      - run: bundle install --jobs 4
+      - name: Cross-compile the precompiled gem (rake-compiler-dock)
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          bundle exec rake "gem:native:$PLATFORM"
+          ls -l pkg
+          test -n "$(ls pkg/zsv-*-"$PLATFORM".gem)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gem-${{ matrix.platform }}
+          path: pkg/zsv-*-${{ matrix.platform }}.gem
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    name: Native gems / ${{ matrix.platform }} on Ruby ${{ matrix.ruby }}
+    needs: [plan, build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.smoke) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gem-${{ matrix.platform }}
+          path: gems
+      - if: matrix.image == ''
+        uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler: none
+      - name: Install the precompiled gem, load it and parse
+        env:
+          IMAGE: ${{ matrix.image }}
+          RUBY: ${{ matrix.ruby }}
+        run: |
+          gem_file=$(ls gems/*.gem)
+          if [ -n "$IMAGE" ]; then
+            # musl: the official ruby:<minor>-alpine image of this runner's architecture.
+            docker run --rm -v "$PWD:/w" -w /w "ruby:$RUBY-$IMAGE" \
+              ruby .github/scripts/gem-smoke.rb "$gem_file" --precompiled
+          else
+            ruby .github/scripts/gem-smoke.rb "$gem_file" --precompiled
+          fi
