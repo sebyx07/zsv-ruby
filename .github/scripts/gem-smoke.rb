@@ -18,7 +18,8 @@ precompiled = ARGV.include?('--precompiled')
 abort "gem-smoke: no such file: #{gem_file}" unless File.file?(gem_file)
 
 CHECK = <<~'RUBY'
-  home = ENV.fetch('GEM_HOME')
+  # realpath: on macOS the temp dir is /var/..., which Ruby records as /private/var/...
+  home = File.join(File.realpath(ENV.fetch('GEM_HOME')), '')
   spec = Gem::Specification.find_by_name('zsv')
   if ENV['ZSV_SMOKE_PRECOMPILED'] == '1' && (spec.platform.to_s == 'ruby' || !spec.extensions.empty?)
     abort "expected a precompiled gem, got platform #{spec.platform} with extensions #{spec.extensions.inspect}"
@@ -28,7 +29,7 @@ CHECK = <<~'RUBY'
   rows = ZSV.parse("a,b\n1,\"2,3\"\n")
   abort "ZSV.parse returned #{rows.inspect}" unless rows == [%w[a b], ['1', '2,3']]
 
-  stray = $LOADED_FEATURES.grep(/zsv/).reject { |path| path.start_with?(home) }
+  stray = $LOADED_FEATURES.grep(/zsv/).reject { |path| File.realpath(path).start_with?(home) }
   abort "zsv was loaded from outside the installed gem: #{stray.inspect}" unless stray.empty?
 
   puts "zsv #{ZSV::VERSION} (#{spec.platform}) installed and parses on #{RUBY_DESCRIPTION}"
