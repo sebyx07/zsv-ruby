@@ -39,7 +39,7 @@ Rules for agents and the full code map: [CLAUDE.md](CLAUDE.md) and [ext/CLAUDE.m
 2. Add or adjust specs for every behaviour change. A new or changed option needs a spec comparing against Ruby's `CSV` for the same input.
 3. C changes follow [ext/CLAUDE.md](ext/CLAUDE.md): every stored `VALUE` is marked, nothing allocates or raises on the free path, `zsv_finish` runs exactly once per parser, and resources are released when Ruby code raises. Run `bin/check asan`, and cover lifetime changes with a spec under `GC.stress`.
 4. A change to the hot path, or any speed claim, comes with `bundle exec rake bench` output from before and after, with the Ruby version and CPU.
-5. Do not edit `ext/zsv/vendor/`, `ext/zsv/ZSV_UPSTREAM` or `lib/zsv/version.rb`. A parser bug inside zsv belongs [upstream](https://github.com/liquidaty/zsv/issues).
+5. Do not edit `ext/zsv/vendor/`, `ext/zsv/ZSV_UPSTREAM` or `lib/zsv/version.rb` by hand. The pin and the vendored tree change only through `bundle exec rake "zsv:bump[X.Y.Z]"` in a pull request of its own; `version.rb` changes only in a release pull request ([RELEASE.md](RELEASE.md)). A parser bug inside zsv belongs [upstream](https://github.com/liquidaty/zsv/issues).
 6. Add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
 7. Update [README.md](README.md), `docs/` and [llms.txt](llms.txt) when methods, options or behaviour change.
 8. Run `bin/check` before marking the pull request ready.

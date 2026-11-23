@@ -6,7 +6,7 @@ module ZSV
   #
   # ZSV parses leniently by default; this error is raised for quoting
   # problems only when +liberal_parsing: false+ is given.
-  class MalformedCSVError
+  class MalformedCSVError < Error
     # @return [Integer, nil] 1-based number of the offending record, as in CSV
     attr_reader :line_number
     alias lineno line_number
@@ -19,7 +19,7 @@ module ZSV
 
   # Raised by strict parsing (+liberal_parsing: false+) when the input is not
   # valid in its encoding, mirroring CSV::InvalidEncodingError.
-  class InvalidEncodingError
+  class InvalidEncodingError < Error
     # @return [Integer, nil] 1-based number of the offending record, as in CSV
     attr_reader :line_number
     alias lineno line_number
