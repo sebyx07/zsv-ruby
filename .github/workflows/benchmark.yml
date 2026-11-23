@@ -1,0 +1,56 @@
+name: Benchmarks
+
+# Runs benchmark/*_bench.rb (`rake bench`: ZSV against the CSV stdlib) on every
+# push to main and on demand, and writes the output into the job summary.
+# Numbers live in these run summaries, never in the docs. Not part of "CI OK";
+# a benchmark that crashes still fails its job. GitHub-hosted runners are noisy:
+# compare ratios within one run, not absolute numbers across runs.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Benchmarks / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64 Linux, runner: ubuntu-24.04 }
+          - { arch: arm64 Linux, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - name: rake bench
+        run: |
+          set -o pipefail
+          bundle exec rake bench 2>&1 | tee bench.txt
+      - name: Job summary
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          {
+            echo "### Benchmarks · $ARCH · $(ruby -e 'print RUBY_DESCRIPTION')"
+            echo
+            echo "Commit \`$GITHUB_SHA\`, runner \`$RUNNER_NAME\`."
+            echo
+            echo '```text'
+            cat bench.txt 2>/dev/null || echo '(no output: see the rake bench step log)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

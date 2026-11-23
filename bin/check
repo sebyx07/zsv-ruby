@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# The gate. CI runs this script (bin/repo-guards fails when it stops), so green here is green there.
+#
+#   bin/check                 pre-PR gate: repo guards + rubocop + clang-format + compile + full rspec
+#   bin/check fast            inner loop: repo guards + lint on changed files + compile + specs not tagged :slow
+#   bin/check files <path>…   only the named files: rubocop on the Ruby ones, clang-format on the
+#                             C ones, rspec on the *_spec.rb ones. Never compiles (safe when
+#                             agents share the checkout); needs an extension already built.
+#   bin/check asan            memory safety: clean rebuild with AddressSanitizer + UBSan, full
+#                             rspec with the sanitizer runtimes preloaded, then a clean rebuild
+#                             of the normal extension. Linux + gcc only (exit 75 elsewhere);
+#                             the same recipe as the `sanitizers` job of ci.yml.
+#
+# Exit: 0 green · 75 environment missing (nothing was graded: run bin/setup) · 1 a check failed.
+# Every failure prints the failing command and the command to rerun just that step.
+#
+# There is ONE compiled artifact (lib/zsv/zsv.so, built through tmp/): two `bin/check` or
+# `rake compile` runs at once in one checkout corrupt each other. Only `files` is safe then.
+#
+# clang-format: graded when installed. When it is not, the step is reported as NOT GRADED and
+# the run can still be green; CI always grades it. ZSV_REQUIRE_CLANG_FORMAT=1 (CI sets it)
+# turns a missing clang-format into exit 75.
+#
+# `fast` blind spots: specs tagged :slow do not run; rubocop and clang-format see only files
+# changed against origin/main.
+set -uo pipefail
+# shellcheck source-path=SCRIPTDIR source=_dx.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_dx.sh"
+cd "$ROOT" || exit 1
+
+RUBY_FILE_PATTERN='(\.rb|\.rake|\.gemspec|/Gemfile|/Rakefile)$|^(Gemfile|Rakefile)$'
+# Our C, never the vendored zsv source.
+C_FILE_PATTERN='^ext/zsv/[^/]+\.(c|h)$'
+
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
+
+mode="${1:-full}"
+case "$mode" in
+  full | fast | asan) [ "$#" -le 1 ] || { usage >&2; exit 2; } ;;
+  files) shift; [ "$#" -ge 1 ] || { usage >&2; exit 2; } ;;
+  -h | --help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+failed=()
+not_graded=()
+
+# run_step <name> <command…> — runs the command, records a failure, keeps going.
+run_step() {
+  local name="$1" status
+  shift
+  step "$name: $*"
+  "$@"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    ok "$name"
+  else
+    printf '  ✗ %s (exit %s)\n' "$name" "$status"
+    failed+=("$name|$*")
+  fi
+}
+
+# Files changed against origin/main (committed, staged, unstaged, untracked), still on disk,
+# matching the pattern in $1.
+changed_files() {
+  local base
+  base="$(git merge-base HEAD origin/main 2>/dev/null || echo HEAD)"
+  {
+    git diff --name-only --diff-filter=d "$base"
+    git ls-files --others --exclude-standard
+  } | sort -u | grep -E "$1" || true
+}
+
+all_c_files() { git ls-files --cached --others --exclude-standard -- 'ext/zsv/*.c' 'ext/zsv/*.h' | grep -E "$C_FILE_PATTERN" | sort -u; }
+
+# clang_format_step <file…> — grades the files, or records the step as not graded.
+clang_format_step() {
+  [ "$#" -gt 0 ] || { step "clang-format: no C files to check, skipped"; return; }
+  if ! command -v clang-format >/dev/null 2>&1; then
+    [ "${ZSV_REQUIRE_CLANG_FORMAT:-}" != 1 ] ||
+      env_missing "clang-format is not installed (ZSV_REQUIRE_CLANG_FORMAT=1)" "install clang-format (Debian/Ubuntu: apt install clang-format; macOS: brew install clang-format)"
+    step "clang-format: NOT GRADED (not installed; CI grades it)"
+    not_graded+=("clang-format")
+    return
+  fi
+  run_step clang-format clang-format --dry-run --Werror "$@"
+}
+
+# The sanitizer flags and options of the `sanitizers` job in .github/workflows/ci.yml.
+ASAN_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1'
+ASAN_LDFLAGS='-fsanitize=address,undefined'
+
+asan_instrumented() {
+  local so
+  so="$(find lib/zsv -name 'zsv.so' -print -quit)"
+  # grep -c, not -q: -q closes the pipe early and pipefail then reports nm's SIGPIPE.
+  [ -n "$so" ] && [ "$(nm -D "$so" | grep -c __asan_)" -gt 0 ]
+}
+
+asan_rspec() {
+  # Ruby itself is not instrumented, so the runtimes are preloaded. detect_leaks=0: ruby frees
+  # little at exit. use_sigaltstack=0: ruby installs its own signal stack.
+  LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
+    ASAN_OPTIONS='detect_leaks=0:abort_on_error=1:strict_string_checks=1:use_sigaltstack=0' \
+    UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
+    bundle exec rspec --format progress
+}
+
+require_asan() {
+  [ "$(uname -s)" = Linux ] ||
+    env_missing "bin/check asan runs on Linux only (this is $(uname -s))" "read the 'sanitizers' job of the pull request's CI run instead"
+  if ! command -v gcc >/dev/null 2>&1 || [ ! -f "$(gcc -print-file-name=libasan.so)" ] || [ ! -f "$(gcc -print-file-name=libubsan.so)" ]; then
+    env_missing "gcc with libasan and libubsan is not installed" "Debian/Ubuntu: apt install gcc libasan8 libubsan1 (the package version follows gcc's)"
+  fi
+  command -v nm >/dev/null 2>&1 || env_missing "nm (binutils) is not on PATH" "apt install binutils"
+}
+
+use_ruby
+require_gems
+
+case "$mode" in
+  full)
+    require_toolchain
+    run_step guards bin/repo-guards
+    run_step rubocop bundle exec rubocop
+    mapfile -t c_files < <(all_c_files)
+    clang_format_step "${c_files[@]}"
+    run_step compile bundle exec rake compile
+    run_step rspec bundle exec rspec --format progress
+    ;;
+  fast)
+    require_toolchain
+    run_step guards bin/repo-guards
+    mapfile -t ruby_files < <(changed_files "$RUBY_FILE_PATTERN")
+    if [ "${#ruby_files[@]}" -gt 0 ]; then
+      run_step rubocop bundle exec rubocop --force-exclusion "${ruby_files[@]}"
+    else
+      step "rubocop: no Ruby files changed against origin/main, skipped"
+    fi
+    mapfile -t c_files < <(changed_files "$C_FILE_PATTERN")
+    clang_format_step "${c_files[@]}"
+    run_step compile bundle exec rake compile
+    run_step rspec bundle exec rspec --format progress --tag '~slow'
+    ;;
+  asan)
+    require_toolchain
+    require_asan
+    run_step clean bundle exec rake clean
+    run_step compile-asan bundle exec rake compile -- "--with-cflags=$ASAN_CFLAGS" "--with-ldflags=$ASAN_LDFLAGS"
+    if [ "${#failed[@]}" -eq 0 ]; then
+      run_step instrumented asan_instrumented
+      [ "${#failed[@]}" -ne 0 ] || run_step rspec-asan asan_rspec
+    fi
+    # Always leave the normal extension behind: an instrumented one aborts without LD_PRELOAD.
+    run_step clean-after bundle exec rake clean
+    run_step compile bundle exec rake compile
+    ;;
+  files)
+    ruby_files=()
+    c_files=()
+    spec_files=()
+    for path in "$@"; do
+      [ -e "$path" ] || { echo "bin/check files: no such file: $path" >&2; exit 2; }
+      if printf '%s\n' "$path" | grep -qE "$RUBY_FILE_PATTERN"; then ruby_files+=("$path"); fi
+      if printf '%s\n' "$path" | grep -qE "$C_FILE_PATTERN"; then c_files+=("$path"); fi
+      case "$path" in *_spec.rb) spec_files+=("$path") ;; esac
+    done
+    if [ "${#spec_files[@]}" -gt 0 ] && ! extension_built; then
+      env_missing "the C extension is not compiled (lib/zsv/zsv.so is missing)" "bin/setup (or ask the agent that owns the build to compile)"
+    fi
+    [ "${#ruby_files[@]}" -eq 0 ] || run_step rubocop bundle exec rubocop --force-exclusion "${ruby_files[@]}"
+    [ "${#c_files[@]}" -eq 0 ] || clang_format_step "${c_files[@]}"
+    [ "${#spec_files[@]}" -eq 0 ] || run_step rspec bundle exec rspec --format progress "${spec_files[@]}"
+    ;;
+esac
+
+graded_note=""
+[ "${#not_graded[@]}" -eq 0 ] || graded_note=" (NOT GRADED: ${not_graded[*]})"
+
+if [ "${#failed[@]}" -eq 0 ]; then
+  printf '\nbin/check %s: GREEN%s\n' "$mode" "$graded_note"
+  exit 0
+fi
+
+printf '\nbin/check %s: FAILED (%s step(s))%s\n' "$mode" "${#failed[@]}" "$graded_note"
+for entry in "${failed[@]}"; do
+  name="${entry%%|*}"
+  command="${entry#*|}"
+  rerun="$command"
+  # .rspec_status records the last run, so rspec can rerun just the failures.
+  [ "$name" != rspec ] || rerun='bundle exec rspec --only-failures'
+  case "$name" in instrumented | rspec-asan) rerun='bin/check asan   (the report above names the file and line; skill debug-gc)' ;; esac
+  printf '  ✗ %s\n      failing command: %s\n      rerun:           %s\n' "$name" "$command" "$rerun"
+done
+printf '  rubocop: "bundle exec rubocop -a <file>" applies the safe autocorrections.\n'
+printf '  clang-format: "clang-format -i <file>" rewrites the file in place.\n'
+printf '  a segfault or a failure only under GC stress: skill debug-gc (.claude/skills/debug-gc/SKILL.md).\n'
+exit 1

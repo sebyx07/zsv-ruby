@@ -1,62 +1,164 @@
 name: CI
 
+# The gate for every pull request and every push to main. Branch protection
+# requires only the aggregate "CI OK" job, so jobs can be added or renamed here
+# without touching the ruleset. release.yml calls this workflow (workflow_call)
+# to verify a version before it is published.
+#
+# Local equivalent: `bin/check` (repo guards, RuboCop, clang-format, compile,
+# RSpec), which the "Gate" job runs unchanged; bin/repo-guards fails if this
+# file stops running it. The other jobs add what one Linux box cannot: every
+# Ruby x OS/arch, ASan/UBSan, and the packaged gem installing offline.
+#
+# Ruby floor: gemspec required_ruby_version (3.3; 3.2 reached EOL 2026-03).
+# Ruby head and zsv upstream (main + latest release) run monthly in canary.yml,
+# the precompiled platform gems in native-gems.yml (release + canary), and
+# benchmarks in benchmark.yml; none of them is part of "CI OK".
+#
+# Windows is not in the matrix: extconf.rb builds the vendored zsv with its
+# POSIX shell `./configure` + `make` through Kernel#system, which cannot run a
+# shell script under RubyInstaller. Adding Windows means building libzsv through
+# mkmf (or the MSYS2 shell) first, then adding windows-latest here.
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CI: '1'
 
 jobs:
+  workflows:
+    name: Lint / workflows + repo guards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - name: zizmor (workflow security)
+        run: pipx run zizmor==1.33.1 --format=github .github/workflows
+      # CI/bin/check parity, the agent-read surface, the CLAUDE.md size cap,
+      # gem/zsv version sync. bin/check runs it too; here it needs no Ruby.
+      - name: Repository guards
+        run: bin/repo-guards
+
+  check:
+    name: Gate / bin/check (Ruby .ruby-version, Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # A missing clang-format is exit 75 here, never "not graded".
+      ZSV_REQUIRE_CLANG_FORMAT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - name: clang-format
+        run: command -v clang-format || { sudo apt-get update -qq && sudo apt-get install -y -qq clang-format; }
+      # The local gate, unchanged: repo guards, RuboCop, clang-format, compile, RSpec.
+      - name: bin/check
+        run: bin/check
+
   test:
+    name: Test / Ruby ${{ matrix.ruby }} · ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # ubuntu-24.04: x86_64 (SSE/AVX), ubuntu-24.04-arm and macos-latest:
+        # arm64 (NEON), macos-15-intel: x86_64 Darwin.
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-15-intel]
         ruby: ['3.3', '3.4', '4.0']
-
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      # Lint and guards are platform-independent and graded once, in the gate job.
+      - name: Compile the extension
+        run: bundle exec rake compile
+      - name: RSpec
+        run: bundle exec rspec
 
-    - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: ${{ matrix.ruby }}
-        bundler-cache: true
-
-    - name: Install dependencies
-      run: bundle install
-
-    - name: Compile extension
-      run: bundle exec rake compile
-
-    - name: Run tests
-      run: bundle exec rake spec
-
-    - name: Run benchmarks (quick)
-      run: bundle exec ruby benchmark/parse_bench.rb
-      if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
-
-  lint:
-    runs-on: ubuntu-latest
-
+  sanitizers:
+    name: Test / ASan + UBSan (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      # Clean ASan + UBSan rebuild, the instrumentation check, RSpec with the
+      # sanitizer runtimes preloaded, then the normal build restored: the same
+      # recipe agents run locally before a C change.
+      - name: bin/check asan
+        run: bin/check asan
 
-    - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: '3.4'
-        bundler-cache: true
+  package:
+    name: Package / build + offline install + require
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - name: Build the source gem
+        run: bundle exec rake build
+      # The zsv C sources ship inside the gem, so `gem install` must compile it
+      # with no network at all: a fresh network namespace has no interface up.
+      - name: Install it into an empty GEM_HOME with the network disabled, require, parse
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          if unshare -rn curl -sS --max-time 5 https://rubygems.org >/dev/null 2>&1; then
+            echo "::error::The network namespace still reaches rubygems.org; the offline check would prove nothing."
+            exit 1
+          fi
+          unshare -rn ruby .github/scripts/gem-smoke.rb pkg/zsv-*.gem
 
-    - name: Check C code formatting
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y clang-format
-        find ext/zsv -name "*.c" -o -name "*.h" | xargs clang-format --dry-run --Werror
-
-    - name: Run RuboCop (if configured)
-      run: |
-        if [ -f .rubocop.yml ]; then
-          bundle exec rubocop
-        fi
+  ci-ok:
+    name: CI OK
+    if: always()
+    # Every job above must succeed; skipped or cancelled counts as failed.
+    needs: [workflows, check, test, sanitizers, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All required jobs passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != success ]; then
+              echo "::error::A required job finished with '$r'. Open the failed job above: its step names the check, and the same command reproduces it locally."
+              exit 1
+            fi
+          done

@@ -1,80 +1,236 @@
 name: Release
 
-# Publishes the gem to RubyGems and creates a GitHub Release whenever a
-# version tag (e.g. v1.3.2) is pushed.
+# Merging a version bump is the release. When lib/zsv/version.rb changes on
+# main and that version is not on RubyGems yet, this runs the full CI workflow
+# and native-gems.yml (the source gem plus one precompiled gem per platform,
+# each installed and smoke-tested), publishes all of them, then creates the tag
+# v<VERSION> and the GitHub Release with the notes from CHANGELOG.md. Nobody tags or `gem push`es by hand.
+# An existing RubyGems version is never pushed again; a run that published but
+# failed before the GitHub Release is finished by a re-run or a manual run
+# (workflow_dispatch on main). That run does not trust main's head: it tags the
+# commit that set VERSION and attaches the gems RubyGems serves. See RELEASE.md.
 #
-# Releasing is automated — see RELEASING.md for the one-time RubyGems
-# trusted-publisher setup and the per-release steps (or just run
-# `bundle exec rake release:tag`).
-
+# Publishing uses RubyGems trusted publishing (OIDC), no API key secret:
+# rubygems.org -> zsv -> Trusted publishers -> GitHub Actions,
+# repository sebyx07/zsv-ruby, workflow release.yml, environment release.
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    paths: ['lib/zsv/version.rb']
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  # Gate the release on a green build + test run on the minimum supported Ruby.
-  test:
-    runs-on: ubuntu-latest
+  version:
+    name: Is v<VERSION> unreleased?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
+      release: ${{ steps.v.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ruby-version: '3.3'
-          bundler-cache: true
-
-      - name: Compile extension
-        run: bundle exec rake compile
-
-      - name: Run tests
-        run: bundle exec rake spec
-
-  release:
-    needs: test
-    runs-on: ubuntu-latest
-    environment: release
-    permissions:
-      contents: write   # create the GitHub Release
-      id-token: write   # RubyGems trusted publishing (OIDC)
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.3'
-          bundler-cache: true
-
-      - name: Verify tag matches gem version
-        run: |
-          gem_version="$(ruby -r ./lib/zsv/version.rb -e 'print ZSV::VERSION')"
-          tag_version="${GITHUB_REF_NAME#v}"
-          echo "gem version: $gem_version"
-          echo "tag version: $tag_version"
-          if [ "$gem_version" != "$tag_version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match ZSV::VERSION ($gem_version)"
-            exit 1
-          fi
-
-      # Builds the gem and pushes it to RubyGems via OIDC trusted publishing.
-      # No API key secret is required once the trusted publisher is configured
-      # on rubygems.org (see RELEASING.md).
-      - name: Publish to RubyGems
-        uses: rubygems/release-gem@v1
-
-      - name: Create GitHub Release
+          persist-credentials: false
+          fetch-depth: 0 # tags, for the stray-tag check
+      - id: v
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes "Release $GITHUB_REF_NAME. See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." \
-            pkg/*.gem 2>/dev/null || \
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes "Release $GITHUB_REF_NAME. See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Releases run from main only (got $GITHUB_REF)."
+            exit 1
+          fi
+          version=$(sed -nE "s/^ *VERSION = '([^']+)'.*/\1/p" lib/zsv/version.rb)
+          if [ -z "$version" ]; then
+            echo "::error::Could not read VERSION from lib/zsv/version.rb"
+            exit 1
+          fi
+          # RubyGems prerelease form 1.5.0.rc1 becomes the git tag v1.5.0-rc1; a
+          # numeric fourth segment (gem-only fix 1.4.4.1) stays as is: v1.4.4.1.
+          tag="v$(echo "$version" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+)\.([0-9]*[a-zA-Z].*)$/\1-\2/')"
+
+          # The source (platform "ruby") gem is the one every release has.
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            "https://rubygems.org/api/v2/rubygems/zsv/versions/$version.json")
+          case "$status" in
+            200) publish=false ;;
+            404) publish=true ;;
+            *) echo "::error::rubygems.org answered HTTP $status; re-run later."; exit 1 ;;
+          esac
+
+          if gh release view "$tag" >/dev/null 2>&1; then release=false; else release=true; fi
+
+          # A tag that exists without a published gem must point at this commit,
+          # or the release would publish one commit under another commit's tag.
+          if [ "$publish" = true ] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            tagged=$(git rev-parse "refs/tags/$tag^{commit}")
+            if [ "$tagged" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $tag already points at $tagged, not $GITHUB_SHA, and $version is not on RubyGems. Bump the version, or delete the stray tag."
+              exit 1
+            fi
+          fi
+
+          echo "version $version, tag $tag, publish to RubyGems: $publish, create GitHub Release: $release"
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "publish=$publish"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+      - name: CHANGELOG.md has notes for this version
+        if: steps.v.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: .github/scripts/changelog-notes.sh "$VERSION" > /dev/null
+
+  verify:
+    name: Verify
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  gems:
+    name: Build
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    uses: ./.github/workflows/native-gems.yml
+
+  publish:
+    name: Publish ${{ needs.version.outputs.tag }} to RubyGems
+    needs: [version, verify, gems]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # RubyGems trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No Bundler and no dependency cache in the job that holds the OIDC token:
+      # it only pushes the gems this run built and tested (native-gems.yml).
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+          bundler: none
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gem-*
+          merge-multiple: true
+          path: gems
+      - name: Exchange the OIDC token for RubyGems credentials
+        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+      # The gems go first: a tag or a GitHub Release with no gem behind it would
+      # advertise a version `gem install` cannot serve. Platform gems first and
+      # the source gem last, so "the source gem is on RubyGems" (what the version
+      # job checks) means the whole release is. A gem already on RubyGems (a
+      # re-run after a partial push) is skipped, never pushed again.
+      - name: Push the platform gems, then the source gem
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          source_gem="gems/zsv-$VERSION.gem"
+          test -f "$source_gem" || { echo "::error::$source_gem was not built."; exit 1; }
+          for gem_file in gems/zsv-"$VERSION"-*.gem "$source_gem"; do
+            platform=$(basename "$gem_file" .gem)
+            platform=${platform#"zsv-$VERSION"}
+            platform=${platform#-}
+            platform=${platform:-ruby}
+            status=$(curl -s -o /dev/null -w '%{http_code}' \
+              "https://rubygems.org/api/v2/rubygems/zsv/versions/$VERSION.json?platform=$platform")
+            case "$status" in
+              200) echo "zsv $VERSION ($platform) is already on RubyGems: skipped"; continue ;;
+              404) gem push "$gem_file" ;;
+              *) echo "::error::rubygems.org answered HTTP $status for $platform; re-run the job."; exit 1 ;;
+            esac
+          done
+
+  github-release:
+    name: Tag + GitHub Release ${{ needs.version.outputs.tag }}
+    needs: [version, publish]
+    # Also runs when the gem was already published (a re-run finishing a
+    # release whose GitHub step failed), but never after a failed publish.
+    if: >-
+      always() && needs.version.result == 'success' &&
+      needs.version.outputs.release == 'true' &&
+      (needs.publish.result == 'success' ||
+       (needs.publish.result == 'skipped' && needs.version.outputs.publish == 'false'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the tag + GitHub Release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # history and tags, to find the commit that set VERSION
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: .ruby-version
+          bundler: none
+      - name: Gems built by this run
+        if: needs.publish.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gem-*
+          merge-multiple: true
+          path: gems
+      - name: Create the tag and the release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: |
+          version_file=lib/zsv/version.rb
+          if [ "$PUBLISH_RESULT" = success ]; then
+            # This run built and pushed the gems from this commit.
+            target="$GITHUB_SHA"
+          else
+            # Finishing an earlier release: main may have moved on since. Tag the
+            # newest commit that set this VERSION, and attach the gems RubyGems
+            # serves instead of rebuilding them from a different tree.
+            target=$(git log -1 --format=%H -S"VERSION = '$VERSION'" -- "$version_file")
+            if [ -z "$target" ]; then
+              echo "::error::No commit on main sets VERSION = '$VERSION' in $version_file."
+              exit 1
+            fi
+            at_target=$(git show "$target:$version_file" | sed -nE "s/^ *VERSION = '([^']+)'.*/\1/p")
+            if [ "$at_target" != "$VERSION" ]; then
+              echo "::error::$target has VERSION '$at_target', expected '$VERSION'. Create the release by hand: RELEASE.md."
+              exit 1
+            fi
+            mkdir -p gems
+            platforms=$(curl -sf https://rubygems.org/api/v1/versions/zsv.json |
+              jq -r --arg v "$VERSION" '.[] | select(.number == $v) | .platform')
+            for platform in $platforms; do
+              (cd gems && gem fetch zsv --version "$VERSION" --platform "$platform" \
+                --clear-sources --source https://rubygems.org)
+            done
+          fi
+          test -f "gems/zsv-$VERSION.gem" || { echo "::error::gems/zsv-$VERSION.gem is missing."; exit 1; }
+          # gh would silently reuse an existing tag and ignore --target.
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            tagged=$(git rev-parse "refs/tags/$TAG^{commit}")
+            if [ "$tagged" != "$target" ]; then
+              echo "::error::Tag $TAG already points at $tagged, not $target."
+              exit 1
+            fi
+          fi
+          echo "releasing $TAG at $target with: $(ls gems)"
+          .github/scripts/changelog-notes.sh "$VERSION" > release-notes.md
+          prerelease=()
+          case "$VERSION" in *[a-zA-Z]*) prerelease=(--prerelease) ;; esac
+          gh release create "$TAG" gems/*.gem \
+            --title "$TAG" --target "$target" --notes-file release-notes.md "${prerelease[@]}"

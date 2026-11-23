@@ -1,0 +1,7 @@
+# zizmor (workflow security) runs in CI's "Lint / workflows + repo guards" job.
+rules:
+  self-repository:
+    ignore:
+      # actionlint 1.7.12 rejects the `$/` self-repository form; keep `./` until it accepts it.
+      - canary.yml
+      - release.yml

@@ -1,0 +1,35 @@
+version: 2
+# Weekly, grouped updates. The developerz.ai maintainer agent reviews them and
+# merges on a green "CI OK"; it is the only merger (no auto-merge workflow).
+#
+# cooldown: a release must be 14 days old before it is proposed, so broken or
+# compromised releases are usually yanked first. Security updates skip it.
+#
+# The vendored zsv C library is not a Dependabot ecosystem: canary.yml builds
+# against its newest release and main monthly, and `rake "zsv:bump[X.Y.Z]"`
+# pins a new one.
+updates:
+  - package-ecosystem: bundler
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 10
+    groups:
+      dev-tools:
+        patterns: ['rubocop*', 'rake*', 'rspec*', 'benchmark-ips', 'csv']
+      other:
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    groups:
+      github-actions:
+        patterns: ['*']

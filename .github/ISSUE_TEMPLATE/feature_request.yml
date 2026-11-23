@@ -1,0 +1,44 @@
+name: Feature request
+description: An option, method or CSV-compatibility behaviour the gem should support.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals the project declines are listed under `triage.non_goals` in
+        [.dz/maintainer/maintainer.yml](https://github.com/sebyx07/zsv-ruby/blob/main/.dz/maintainer/maintainer.yml):
+        for example downloading at install time, patching the vendored zsv source, or output that
+        differs from Ruby's CSV for a compatible option.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you cannot do today. Include the input and the call you would like to write.
+      render: ruby
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: The rows or result you expect. If Ruby's CSV already does this, show its call and output; that becomes the spec.
+      render: ruby
+    validations:
+      required: true
+  - type: dropdown
+    id: csv
+    attributes:
+      label: Does Ruby's CSV stdlib have this?
+      options:
+        - "Yes: same option or method name"
+        - "Yes: under another name"
+        - "No: it is new"
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workaround in use today
+    validations:
+      required: false

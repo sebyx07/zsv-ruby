@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# IRB with ZSV loaded from this checkout (the compiled extension in lib/zsv/) and the CSV
+# stdlib next to it for parity checks.
+#
+#   bin/console
+#   >> ZSV.parse("a,b\n1,2\n", headers: true)
+#   >> CSV.parse("a,b\n1,2\n", headers: true).map(&:to_h)
+#
+# Exit 75 = Ruby, the bundle or the compiled extension is missing: run bin/setup.
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=_dx.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_dx.sh"
+cd "$ROOT" || exit 1
+
+use_ruby
+require_gems
+extension_built || env_missing "the C extension is not compiled (lib/zsv/zsv.so is missing)" "bin/setup"
+
+exec bundle exec irb -I lib -r zsv -r csv "$@"

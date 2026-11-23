@@ -1,0 +1,185 @@
+# yaml-language-server: $schema=https://developerz.ai/schemas/maintainer.v1.json
+# developerz.ai maintainer policy for sebyx07/zsv-ruby
+#
+# AI-MANAGED. The agent handles issues, pull requests and updates end to end, for everyone:
+# outside contributors, collaborators, the owner and the dependency bots. It triages, answers,
+# reviews, declines with a reason, merges, and closes what has stalled on its reporter or author.
+# A pull request merges once its author says it is ready (out of draft / marked ready for review),
+# it has been reviewed and "CI OK" is green. A draft or a "WIP" / "DO NOT MERGE" title is never
+# merged. A human is asked only for what `escalate` names, the platform's hardcoded categories
+# (security, license, CLA), and two holds on outside contributions: GitHub asks a maintainer to
+# approve a first-time contributor's CI run (a repository Actions setting), and changes to CI,
+# release, publish or vendoring automation stay with the owner (the last `triage.non_goals` line).
+#
+# The gem wraps the zsv C library (github.com/liquidaty/zsv) and its version mirrors it: gem X.Y.Z
+# ships zsv X.Y.Z. Once a month the `upstream-zsv` task checks for a newer zsv release and opens
+# `chore: zsv X.Y.Z`. Each week the `release-due` checkup judges whether a release is needed and
+# opens a release PR when so, and merging it IS the release (.github/workflows/release.yml
+# publishes when lib/zsv/version.rb changes on main, then tags). Dependency-bot PRs merge through
+# this agent only: there is no second merger (no GitHub auto-merge workflow) that would skip review.
+#
+# The gate is the repository, not this file: CI's aggregate "CI OK" check. Verify the ruleset with
+# `gh api repos/sebyx07/zsv-ruby/rulesets` before trusting any sentence here about it.
+version: 1
+
+tone:
+  voice: friendly
+  language: en
+
+triage:
+  skip_project_members: false
+  ask_for_repro: true
+  # A parser bug is unreproducible without the input bytes, the options and the platform.
+  required_fields: [steps, expected, actual, version, environment]
+  qualify_into: [bug, feature, dupe, question, docs]
+  close_unanswered_repro_after_days: 14
+  # Proposals this project will not take (from CLAUDE.md's invariants).
+  non_goals:
+    - "Fetching anything over the network at gem install or compile time: the zsv source is vendored in the gem and pinned by SHA-256, so the build works offline"
+    - "Linking against a system libzsv, an unpinned zsv, or a zsv whose tarball hash is not the one recorded in ext/zsv/ZSV_UPSTREAM"
+    - "Editing the vendored zsv source in place (ext/zsv/vendor/zsv): it is exactly what `rake zsv:vendor` extracts from the pinned upstream tarball; parser bugs in zsv are reported upstream"
+    - "A gem version that does not mirror the wrapped zsv version (gem X.Y.Z wraps zsv X.Y.Z)"
+    - "Output that differs from Ruby's CSV stdlib for an option the docs list as compatible: parity for documented options is byte-identical and spec-enforced"
+    - "A runtime dependency in the gemspec"
+    - "Hardcoded benchmark numbers or speedup claims in docs without a reproducible run behind them (CI posts benchmark output; `bundle exec rake bench` reproduces it)"
+    - "Hardcoded Ruby / OS version lists in docs (the CI matrix owns them)"
+    - "Backwards-compatibility shims, deprecated aliases, dead-code comments, or speculative abstractions"
+    - "Outside changes to CI, release or vendoring automation (.github/, bin/, Rakefile, gemspec, ext/zsv/extconf.rb, ZSV_UPSTREAM, ext/zsv/vendor/, ZSV::VERSION): owner only. Dependency-bot bumps are exempt"
+
+handoff:
+  mode: fleet
+  ask_reporter_first: false
+
+pr:
+  wait_for_other_bots: [copilot]
+  auto_merge: true
+  # Every author: the bot's own PRs, the dependency bots', contributors' and project members'.
+  # "Ready" is the author's call: a PR merges only once it is out of draft, reviewed and green.
+  auto_merge_scope: any
+  require_review: true
+  # The one required check: ci.yml's aggregate job. Every CI job must pass (lint, the Ruby x OS
+  # matrix, the sanitizer build, the package build). Ruby head and zsv upstream (main and the
+  # latest release) run monthly in canary.yml; the `improve` and `upstream-zsv` tasks read it.
+  required_checks:
+    - "CI OK"
+  close_awaiting_author_after_days: 21
+
+review:
+  enabled: true
+  force: true
+  depth: inline
+  profile: chill
+  request_changes: true
+  approval: false
+  high_level_summary: true
+  learnings: false
+  chat_auto_reply: true
+  auto_review:
+    enabled: true
+    incremental: true
+    drafts: false
+    base_branches: [main]
+    ignore_title_keywords: [WIP, "DO NOT MERGE"]
+  anti_noise:
+    severity_floor: minor
+    max_comments: 10
+    dedupe: true
+  # The vendored zsv source is upstream's code: reviewed as a whole by hash, not line by line.
+  path_filters: ["!ext/zsv/vendor/**"]
+  path_instructions:
+    - path: "ext/zsv/*.c"
+      instructions: >-
+        C extension: a mistake here is a segfault or memory corruption in the user's process.
+        Check, per .dz/maintainer/reviewer.md: every VALUE the parser struct holds is marked
+        (and compacted correctly) by the TypedData functions; no Ruby object is allocated and no
+        Ruby exception is raised from a zsv callback running inside free/GC; an rb_raise or a
+        yielded block that raises cannot leak the FILE*, the zsv parser or malloc'd buffers;
+        zsv_finish runs exactly once per zsv parser and zsv_delete never runs twice; pointers
+        from zsv_get_cell or RSTRING_PTR are not used after a call that can allocate, run Ruby
+        code or advance the parser; sizes are size_t/long checked before narrowing. A behaviour
+        change needs a spec, and a lifetime change needs one that runs under GC.stress.
+    - path: "ext/zsv/*.h"
+      instructions: >-
+        Shared by every C file: a struct field holding a VALUE needs the matching mark; a
+        changed signature needs every caller updated. The same C safety rules as ext/zsv/*.c.
+    - path: "ext/zsv/extconf.rb"
+      instructions: >-
+        The build must stay offline and reproducible: no download, no system libzsv, no
+        -march=native or other host-specific flag on the default path (a binary compiled on one
+        CPU must not SIGILL on another; only the opt-in --enable-native / ZSV_NATIVE=1 may add
+        them, never for cross-builds), no disabled warnings to hide a real one. The zsv version comes from
+        ext/zsv/ZSV_UPSTREAM only. Outside contributors do not change this file.
+    - path: "ext/zsv/ZSV_UPSTREAM"
+      instructions: >-
+        The pin: a zsv version and the SHA-256 of its upstream tarball. A change here is a zsv
+        upgrade and must come with the re-vendored tree (`rake zsv:vendor`), the matching
+        lib/zsv/version.rb expectation (gem X.Y.Z wraps zsv X.Y.Z), a CHANGELOG entry and
+        before/after benchmark numbers in the PR body. Verify the hash yourself against
+        https://github.com/liquidaty/zsv/archive/refs/tags/v<version>.tar.gz.
+    - path: "lib/**"
+      instructions: >-
+        The public Ruby API. Documented options behave byte-identically to Ruby's CSV stdlib
+        (spec/ holds the parity specs); a new option needs a parity spec against CSV and a row in
+        docs/API_REFERENCE.md, README.md and llms.txt. Every parser a module method opens is
+        closed on every path (ensure), including when the block raises.
+    - path: "spec/**"
+      instructions: >-
+        Specs hardcode inputs and expected rows on purpose. Flag a spec that cannot fail (asserts
+        nothing about the rows), a parity claim checked against a literal instead of CSV's own
+        output, and a `skip` / `pending` / `xit` added to get green.
+    - path: "benchmark/**"
+      instructions: >-
+        A benchmark must compare like with like (same input, same options, both sides
+        materialising the same rows) and print the Ruby version and platform. A number copied
+        from it into README or docs must name the run it came from.
+
+release:
+  # No release manager and no agent-published channels: release.yml owns the whole lane (gem
+  # first via RubyGems trusted publishing, then the tag and the GitHub release from CHANGELOG).
+  manager: none
+  channels: []
+
+escalate:
+  # A breaking change asks the owner first: a major version is a maintainer's decision.
+  ask_before_acting: [breaking_change]
+
+# Modes. A `scout` firing (the default) is read-only: it reads the checkout and the platform's
+# signals and files asks, and an ask that names CI config or this policy is refused at ingest.
+# `mode: devops` runs the brief as one task with a shell and delivers a pull request (it needs
+# `handoff.mode: fleet`, set above). The four briefs that run commands and open a pull request
+# are devops; `health` only reports, so it stays a scout.
+schedules:
+  # Weekly and judged, so a merge never cuts a release. One weekday per repo, so the fleet is not
+  # hit at once (better_structure_sql takes Thursday, ruby2html Friday).
+  - name: release-due
+    days: [wed]
+    hours_utc: [3]
+    brief_file: .dz/schedules/release-due.md
+    mode: devops
+  # The one exception, so a confirmed security fix does not wait up to a week for the slot above.
+  - name: security-release
+    days: [mon, tue, thu, fri, sat, sun]
+    hours_utc: [2]
+    brief_file: .dz/schedules/security-release.md
+    mode: devops
+  - name: health
+    days: [mon, tue, wed, thu, fri, sat, sun]
+    hours_utc: [7]
+    brief_file: .dz/schedules/health.md
+  # Monthly: the first Monday of the month (UTC days 1-7), after canary.yml's run on the 1st has
+  # built this gem against upstream's latest release. Two days before that week's `release-due`,
+  # so a merged `chore: zsv X.Y.Z` becomes gem X.Y.Z the same week.
+  - name: upstream-zsv
+    days: [mon]
+    weeks_of_month: [1]
+    hours_utc: [5]
+    brief_file: .dz/schedules/upstream-zsv.md
+    mode: devops
+  # Monthly: the first Thursday of the month, after `upstream-zsv` so the two never race on
+  # ext/zsv/.
+  - name: improve
+    days: [thu]
+    weeks_of_month: [1]
+    hours_utc: [8]
+    brief_file: .dz/schedules/improve.md
+    mode: devops
