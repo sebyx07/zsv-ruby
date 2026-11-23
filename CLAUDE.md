@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for agents in this repository. **Budget: under 12,000 chars** (`bin/repo-guards` fails past it; the developerz.ai loader cuts the rest). Move detail down, never raise the cap:
+Follow the invariants and prohibitions below on every change. This is the project brain for every agent run on this repository. Keep it **under 12,000 characters**: `bin/repo-guards` enforces the cap and the developerz.ai loader cuts the rest. Move detail down; never raise the cap.
 
 | Touching | Also read (auto-loads there) |
 |---|---|
@@ -10,19 +10,31 @@ Guidance for agents in this repository. **Budget: under 12,000 chars** (`bin/rep
 
 `AGENTS.md` is a symlink to this file. User-facing reference: `README.md`, `docs/API_REFERENCE.md`, `llms.txt`. Intent and direction (draft): `docs/idea/`, index `docs/README.md`.
 
-## zsv-ruby
+## Stack and structure
 
 Ruby gem `zsv` (`zsv.gemspec`; version in `lib/zsv/version.rb`): a CSV **parser** with the reading API of Ruby's `CSV` (`ZSV.foreach`, `parse`, `read`, `open`, `ZSV::Parser#shift` / `each`), implemented as a C extension over the SIMD [zsv](https://github.com/liquidaty/zsv) C library. It runs inside the user's process: a bug in the C is a crash or corrupted memory in their application.
+
+| Layer | Path | Owns |
+|---|---|---|
+| Ruby API | `lib/zsv.rb`, `lib/zsv/` | Module methods, option normalisation and validation, input resolution (path vs data vs IO), error classes, `Enumerable` on the parser. Prepended over the C-defined methods |
+| Bindings | `ext/zsv/zsv_ext.c` | `Init_zsv`, `ZSV::Parser` TypedData (mark, free, size, compact), thin `rb_zsv_*` methods |
+| Bridge | `ext/zsv/parser.c` | zsv callbacks, sources (file, String, IO), `shift`, `rewind`, release. **The critical file** |
+| Rows | `ext/zsv/row.c` | Cell bytes to frozen Ruby Strings, `Array` or `Hash` rows, headers |
+| Options | `ext/zsv/options.c` | Options Hash to C struct, range checks |
+| Build | `ext/zsv/extconf.rb`, `upstream.rb`, `ZSV_UPSTREAM`, `rakelib/zsv.rake`, `Rakefile` | Vendoring, the static libzsv build, cross-compiled platform gems (`NATIVE_PLATFORMS`) |
+| zsv | `ext/zsv/vendor/zsv/` | Upstream's parser. Read-only; API in `include/zsv.h` |
+
+Errors: `ZSV::Error` < `StandardError`; `ZSV::MalformedCSVError`, `ZSV::InvalidEncodingError`. Bad options raise `ArgumentError` before any file is opened.
 
 ## Invariants
 
 All must stay true. 1 to 4 are detailed, with their rules, in `ext/CLAUDE.md`.
 
-1. **GC safety.** Every `VALUE` held in C memory (parser struct, row builder, options) is marked and, since marks are movable, updated on compaction. The free path never calls into Ruby. A new field means a mark line, a compact line and a spec under `GC.stress`.
-2. **Callback → pull bridge.** zsv pushes rows through a callback during `zsv_parse_more()`; Ruby pulls with `shift`. The callback appends to a row buffer, `shift` drains it and parses another chunk only when it is empty. Callbacks run under zsv's C frames, so **no exception may unwind through zsv**: Ruby code in a callback runs under `rb_protect`, and the recorded exception is re-raised after zsv returns and the parser is released.
+1. **GC safety.** Mark every `VALUE` held in C memory (parser struct, row builder, options) and update movable marks on compaction. Never call Ruby from the free path. A new field needs mark and compact lines and a `GC.stress` spec.
+2. **Callback to pull bridge.** During `zsv_parse_more()`, callbacks append rows to a buffer; `shift` drains it before parsing another chunk. Never unwind an exception through zsv's C frames: run Ruby code in callbacks under `rb_protect`, then re-raise the recorded exception after zsv returns and the parser is released.
 3. **`zsv_finish()` exactly once** per zsv parser, at end of input (it flushes a final row with no trailing newline). Never from close, free or rewind, never twice. `zsv_delete()` and `fclose()` exactly once, in the one release function.
-4. **No leaks on any path.** A raise from options, from an IO's `#read`, from the block given to `each` / `foreach` / `open`, a `break`, a double `close`, a parser dropped unclosed: none may leak a `FILE *`, a zsv parser or memory, and none may crash. Module methods close what they open in `ensure`.
-5. **Parity with `CSV` for documented options.** For every option `docs/API_REFERENCE.md` lists as compatible, the rows equal what Ruby's `CSV` returns for the same input, and the parity specs compare against `CSV`'s own output, never a literal. Each intended difference is listed in `docs/API_REFERENCE.md` and `llms.txt`. An unsupported option or value raises `ArgumentError`; nothing is accepted and ignored.
+4. **No leaks on any path.** Options, IO `#read`, or `each` / `foreach` / `open` blocks may raise; blocks may `break`; a parser may be closed twice or dropped unclosed. None may crash or leak a `FILE *`, zsv parser or memory. Module methods close what they open in `ensure`.
+5. **Parity with `CSV` for documented options.** For every compatible option in `docs/API_REFERENCE.md`, rows equal Ruby `CSV` for the same input; specs compare with `CSV` output, never a literal. List intended differences in `docs/API_REFERENCE.md` and `llms.txt`. Raise `ArgumentError` for unsupported options or values; never accept and ignore them.
 6. **Version sync.** Gem `X.Y.Z` ships zsv `X.Y.Z`. A gem-only release appends a fourth segment (`X.Y.Z.1`). The pin may be ahead of the gem between a zsv upgrade and its release; the gem is never ahead of the pin (`bin/repo-guards`).
 7. **Vendored, pinned, offline.** `ext/zsv/ZSV_UPSTREAM` holds the zsv version and the SHA-256 of its upstream tarball. `ext/zsv/vendor/zsv/` is exactly what `rake zsv:vendor` extracts from that verified tarball (`rake zsv:verify` proves it) and ships inside the gem. `gem install` and `rake compile` never touch the network and never link a system libzsv.
 8. **Honest numbers.** No speedup or memory figure in README, docs or the gemspec that a reproducible benchmark run does not show. `benchmark.yml` posts every `main` push's `rake bench` output; docs point there.
@@ -70,20 +82,6 @@ Changed `Gemfile`, the gemspec, `extconf.rb` or `ZSV_UPSTREAM`: `bin/setup` befo
 ### One compiled artifact
 
 `rake compile` builds one `lib/zsv/zsv.so` (`.bundle` on macOS) through one `tmp/` tree, and every spec loads it. Two compiles at once (`bin/check`, `bin/check fast`, `bin/check asan`, `rake`, `rake compile`, `rake spec`, `rake bench`) corrupt each other and produce failures that look like real bugs. With several agents in the checkout: **`ext/zsv/*.{c,h}` is one slice with one owner, the only one compiling**; everyone else uses `bin/check files`.
-
-## Architecture
-
-| Layer | Path | Owns |
-|---|---|---|
-| Ruby API | `lib/zsv.rb`, `lib/zsv/` | Module methods, option normalisation and validation, input resolution (path vs data vs IO), error classes, `Enumerable` on the parser. Prepended over the C-defined methods |
-| Bindings | `ext/zsv/zsv_ext.c` | `Init_zsv`, `ZSV::Parser` TypedData (mark, free, size, compact), thin `rb_zsv_*` methods |
-| Bridge | `ext/zsv/parser.c` | zsv callbacks, sources (file, String, IO), `shift`, `rewind`, release. **The critical file** |
-| Rows | `ext/zsv/row.c` | Cell bytes → frozen Ruby Strings → `Array` or `Hash` rows; headers |
-| Options | `ext/zsv/options.c` | Options Hash → C struct, range checks |
-| Build | `ext/zsv/extconf.rb`, `upstream.rb`, `ZSV_UPSTREAM`, `rakelib/zsv.rake`, `Rakefile` | Vendoring, the static libzsv build, cross-compiled platform gems (`NATIVE_PLATFORMS`) |
-| zsv | `ext/zsv/vendor/zsv/` | Upstream's parser. Read-only; API in `include/zsv.h` |
-
-Errors: `ZSV::Error` < `StandardError`; `ZSV::MalformedCSVError`, `ZSV::InvalidEncodingError`. Bad options raise `ArgumentError` before any file is opened.
 
 ## Conventions
 
