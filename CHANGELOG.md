@@ -12,6 +12,8 @@ under **Changed — breaking**, with what to do before upgrading.
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-11-23
+
 ### Added
 - IO sources: `ZSV::Parser.new(io)`, `ZSV.parse_enum(io)` read any object
   responding to `#read` (File, StringIO, pipes, sockets) as the rows are
