@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'zsv'
-require 'tempfile'
+require 'tmpdir'
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure
@@ -17,18 +17,16 @@ end
 
 # Helper to create temporary CSV files
 module CSVHelpers
-  def create_csv_file(content)
-    file = Tempfile.new(['test', '.csv'])
-    file.write(content)
-    file.close
-    file.path
-  end
-
+  # Yields the path of a file holding +content+ (written as bytes), removed
+  # with its directory when the block returns. A directory rather than a
+  # Tempfile: a Tempfile nothing references is unlinked whenever GC collects
+  # it, which can be in the middle of the example.
   def with_csv_file(content)
-    path = create_csv_file(content)
-    yield path
-  ensure
-    File.unlink(path) if path && File.exist?(path)
+    Dir.mktmpdir('zsv-spec') do |dir|
+      path = File.join(dir, 'test.csv')
+      File.binwrite(path, content)
+      yield path
+    end
   end
 end
 

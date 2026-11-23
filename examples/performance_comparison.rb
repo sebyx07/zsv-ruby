@@ -1,71 +1,48 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
+# A quick, single-run look at ZSV next to Ruby's CSV on one generated file.
+# Run with: bundle exec ruby examples/performance_comparison.rb
+#
+# For numbers worth quoting use the benchmarks, which warm up, repeat and
+# isolate memory measurements: bundle exec rake bench
+
 require 'bundler/setup'
 require 'csv'
+require 'tmpdir'
 require 'zsv'
-require 'benchmark'
 
-# Create test data
-rows = 10_000
-cols = 10
+ROWS = 100_000
+COLUMNS = 10
+RUNS = 5
 
-csv_data = []
-csv_data << (1..cols).map { |i| "col#{i}" }.join(',')
-rows.times do |i|
-  csv_data << (1..cols).map { |j| "value_#{i}_#{j}" }.join(',')
+def seconds
+  started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  yield
+  Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 end
 
-test_file = 'performance_test.csv'
-File.write(test_file, csv_data.join("\n"))
+def best_of(runs, &)
+  Array.new(runs) { seconds(&) }.min
+end
 
-puts 'Performance Comparison'
-puts '=' * 60
-puts "File: #{rows} rows × #{cols} columns"
-puts "Size: #{File.size(test_file) / 1024} KB"
-puts '=' * 60
-
-n = 10
-
-Benchmark.bm(15) do |x|
-  x.report('CSV (stdlib)') do
-    n.times do
-      count = 0
-      CSV.foreach(test_file) { |_row| count += 1 }
-    end
+Dir.mktmpdir do |dir|
+  path = File.join(dir, 'performance.csv')
+  File.open(path, 'w') do |file|
+    file.puts(Array.new(COLUMNS) { |column| "col#{column + 1}" }.join(','))
+    ROWS.times { |row| file.puts(Array.new(COLUMNS) { |column| "value_#{row}_#{column}" }.join(',')) }
   end
 
-  x.report('ZSV') do
-    n.times do
-      count = 0
-      ZSV.foreach(test_file) { |_row| count += 1 }
-    end
-  end
+  puts "#{ROWS} rows x #{COLUMNS} columns, #{File.size(path) / 1024} KB, best of #{RUNS} runs"
+  puts RUBY_DESCRIPTION
+
+  csv = best_of(RUNS) { CSV.foreach(path) { |row| row } }
+  zsv = best_of(RUNS) { ZSV.foreach(path) { |row| row } }
+  puts format('CSV.foreach  %<time>.3f s', time: csv)
+  puts format('ZSV.foreach  %<time>.3f s  (%<ratio>.1fx)', time: zsv, ratio: csv / zsv)
+
+  csv = best_of(RUNS) { CSV.foreach(path, headers: true) { |row| row } }
+  zsv = best_of(RUNS) { ZSV.foreach(path, headers: true) { |row| row } }
+  puts format('CSV.foreach headers: true  %<time>.3f s', time: csv)
+  puts format('ZSV.foreach headers: true  %<time>.3f s  (%<ratio>.1fx)', time: zsv, ratio: csv / zsv)
 end
-
-puts "\n=== Memory Usage (approximate) ==="
-
-GC.start
-before_csv = `ps -o rss= -p #{Process.pid}`.to_i
-CSV.foreach(test_file) { |row| row }
-GC.start
-after_csv = `ps -o rss= -p #{Process.pid}`.to_i
-csv_memory = (after_csv - before_csv) / 1024.0
-
-GC.start
-before_zsv = `ps -o rss= -p #{Process.pid}`.to_i
-ZSV.foreach(test_file) { |row| row }
-GC.start
-after_zsv = `ps -o rss= -p #{Process.pid}`.to_i
-zsv_memory = (after_zsv - before_zsv) / 1024.0
-
-puts "CSV: ~#{csv_memory.round(2)} MB"
-puts "ZSV: ~#{zsv_memory.round(2)} MB"
-
-if csv_memory.positive? && zsv_memory.positive?
-  reduction = ((1 - (zsv_memory / csv_memory)) * 100).round(1)
-  puts "Reduction: #{reduction}%"
-end
-
-# Cleanup
-File.unlink(test_file)

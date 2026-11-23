@@ -21,9 +21,11 @@ ext/zsv/*.so
 ext/zsv/*.bundle
 ext/zsv/*.o
 ext/zsv/Makefile
-ext/zsv/vendor/
 lib/zsv/*.so
 lib/zsv/*.bundle
+lib/zsv/[0-9]*/
+# The vendored zsv source is committed whole (rake zsv:verify checks it)
+!ext/zsv/vendor/zsv/**
 
 # IDE
 .idea/
