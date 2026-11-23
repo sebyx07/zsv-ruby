@@ -1,7 +1,7 @@
 # Docs
 
 The index of this directory. Add a line when you add a page. The agent brain is the root
-[`CLAUDE.md`](../CLAUDE.md); the commands are `bin/setup` and `bin/check`.
+[`CLAUDE.md`](../CLAUDE.md); the commands are `bin/setup`, `bin/check`, `bin/dev` (recompile + console) and `bin/stop`.
 
 | Page | What it holds |
 |---|---|

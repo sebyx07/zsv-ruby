@@ -48,3 +48,6 @@ Gemfile.lock
 # Benchmarks
 /benchmark/results/
 .rspec_status
+
+# Local environment (names in .env.example)
+.env

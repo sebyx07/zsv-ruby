@@ -1,77 +1,78 @@
 # AI-first scorecard
 
-> Hand-written for the AI-maintenance onboarding pass of 2026-11-22, describing the repository as
-> it stands once that pass's pull request merges. The next developerz.ai onboarding run rewrites
-> this file whole; the latest run wins, and the same card is stored on the platform.
+> This card is the repository's own — established by the developerz.ai maintainer agent for the maintainers of this repository; each onboarding run rewrites the file whole, the latest run wins, and the same card is stored on the platform.
 
-- Computed: 2026-11-22
-- Proof: **not yet proved**: written before the pass merged; items marked *pending* depend on
-  CI running on GitHub and must be re-checked at head.
+- Run: `run_9422e9c1453046608b21e62289bc2803`
+- Computed: 2026-11-23T08:25:03.977Z
+- Proof: **proved** — every command ran green at head.
+- Score: 13 of 15 items ok
 
 ## `policy` — ok
 
-- .dz/maintainer/maintainer.yml established (validates against maintainer.v1.json; passes `dz-contract`)
-- .dz/maintainer/reviewer.md established (C safety first)
-- .dz/schedules/{health,release-due,security-release,upstream-zsv,improve}.md established
-- platform-standard briefs: repo-census and repo-score scheduled; hygiene, devops and fix-sweep offered (entries commented)
-- .dz/pipeline/agent-pipeline.json established
+- .dz/maintainer/maintainer.yml already present, left alone
+- .dz/maintainer/reviewer.md already present, left alone
 
 ## `brain` — ok
 
-- CLAUDE.md rewritten (under 12,000 characters, enforced by bin/repo-guards); AGENTS.md is a symlink to it
-- nested: ext/CLAUDE.md (C rules), spec/CLAUDE.md, .github/CLAUDE.md
+- CLAUDE.md already present, left alone
 
 ## `roster` — ok
 
-- .claude/agents/c-safety-reviewer.md
+- .claude/agents already present, left alone
 
 ## `skills` — ok
 
-- .claude/skills/{verify-change,upgrade-zsv,debug-gc}/SKILL.md
-
-## `commands` — ok
-
-- .claude/commands/{planx,feature,release,bug-sweep}.md; `/release` prepares a version-bump PR, never a tag
+- .claude/skills already present, left alone
 
 ## `scripts` — ok
 
-- bin/setup, bin/check (`fast`, `files`, `asan`; exit 75 when the environment is missing), bin/repo-guards, bin/console, bin/zsv-upstream-check (exit 10 when upstream is newer)
+- bin/setup already present, left alone
+- bin/dev established
+- bin/check already present, left alone
+- bin/stop established
+- down: ./bin/stop (bin)
+- ./bin/setup exited 0 at head (0.6s)
 
 ## `wiring` — ok
 
-- .mcp.json (codegraph)
+- .mcp.json established
+
+## `commands` — ok
+
+- .claude/commands already present, left alone
 
 ## `access` — ok
 
-- no secrets needed: RubyGems publishing is OIDC trusted publishing (no API key)
+- asked for 0 credentials
+- ./bin/check exited 0 at head (8.3s) without one
 
-## `layout` — ok
+## `layout` — gap
 
-- single gem at the root; the vendored zsv source under ext/zsv/vendor/zsv is pinned by SHA-256
+- migration to the house layout filed as tasks
+- apps/zsv-ruby: 18 move(s) planned as one task
 
 ## `smoke_test` — ok
 
-- spec/ runs against the compiled extension; CI builds the gem and installs it without Bundler
+- spec/zsv_spec.rb in the repository
+- run by ./bin/check exited 0 at head (8.3s)
 
-## `env_example` — ok
+## `env_example` — gap
 
-- no environment variables are needed to build or test
+- nothing recorded
 
 ## `agents_md` — ok
 
-- AGENTS.md (symlink), llms.txt
+- AGENTS.md already present, left alone
 
 ## `per_workspace_brains` — ok
 
-- single-package repository
+- single-package repository: 0 workspaces
+- CLAUDE.md already present, left alone
 
 ## `docs_readme` — ok
 
-- docs/README.md indexes docs/idea/ (overview, principles, stack, data-model, deployment, direction draft) and docs/standards/
-- docs/ (API_REFERENCE.md, QUICKSTART.md) linked from README.md and llms.txt
+- docs/README.md already present, left alone
 
-## `gate_proved` — pending
+## `gate_proved` — ok
 
-- `CI OK` aggregate job, canary.yml, benchmark.yml, dependabot.yml and the version-bump-triggered
-  release.yml land in this pass; the ruleset requiring `CI OK` and the RubyGems trusted publisher
-  are set by the owner (see the pass's pull request)
+- ./bin/check exited 0 at head (8.3s)
