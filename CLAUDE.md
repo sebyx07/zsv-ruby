@@ -8,7 +8,7 @@ Guidance for agents in this repository. **Budget: under 12,000 chars** (`bin/rep
 | `spec/` | [`spec/CLAUDE.md`](spec/CLAUDE.md): parity specs, GC-stress specs, `:slow` |
 | `.github/`, `RELEASE.md`, `lib/zsv/version.rb` | [`.github/CLAUDE.md`](.github/CLAUDE.md): CI jobs, canary, release lane |
 
-`AGENTS.md` is a symlink to this file. User-facing reference: `README.md`, `docs/API_REFERENCE.md`, `llms.txt`.
+`AGENTS.md` is a symlink to this file. User-facing reference: `README.md`, `docs/API_REFERENCE.md`, `llms.txt`. Intent and direction (draft): `docs/idea/`, index `docs/README.md`.
 
 ## zsv-ruby
 

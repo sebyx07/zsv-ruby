@@ -13,6 +13,7 @@
 - .dz/maintainer/maintainer.yml established (validates against maintainer.v1.json; passes `dz-contract`)
 - .dz/maintainer/reviewer.md established (C safety first)
 - .dz/schedules/{health,release-due,security-release,upstream-zsv,improve}.md established
+- platform-standard briefs: repo-census and repo-score scheduled; hygiene, devops and fix-sweep offered (entries commented)
 - .dz/pipeline/agent-pipeline.json established
 
 ## `brain` — ok
@@ -30,7 +31,7 @@
 
 ## `commands` — ok
 
-- .claude/commands/{planx,feature,release}.md; `/release` prepares a version-bump PR, never a tag
+- .claude/commands/{planx,feature,release,bug-sweep}.md; `/release` prepares a version-bump PR, never a tag
 
 ## `scripts` — ok
 
@@ -66,6 +67,7 @@
 
 ## `docs_readme` — ok
 
+- docs/README.md indexes docs/idea/ (overview, principles, stack, data-model, deployment, direction draft) and docs/standards/
 - docs/ (API_REFERENCE.md, QUICKSTART.md) linked from README.md and llms.txt
 
 ## `gate_proved` — pending
