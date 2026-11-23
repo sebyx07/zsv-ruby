@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# one-command stop, run by developerz.ai when a session ends — established by the developerz.ai maintainer agent for the maintainers of this repository. One command; adjust as the repo grows.
-set -euo pipefail
-cd "$(dirname "$0")/.."
-# Nothing detected to stop (no compose file at the repo root). Replace with the command
-# that stops what bin/dev starts: idempotent, exit 0 when nothing runs, never remove data.
-true
+# The counterpart of bin/dev. zsv-ruby is a library: bin/dev starts no server, container or
+# background process (it ends with IRB), so there is nothing to stop. Exits 0, touches nothing.
+# If bin/dev ever starts something long-lived, stop it here: idempotent, never removing data.
+exit 0

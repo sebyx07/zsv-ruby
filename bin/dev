@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
-# one-command dev — established by the developerz.ai maintainer agent for the maintainers of this repository. One command; adjust as the repo grows.
+# The dev loop for a C extension: rebuild it from the current sources, then open bin/console
+# (IRB with ZSV from this checkout and CSV for parity checks). Rerun after every C change.
+# Nothing keeps running after you leave IRB, so bin/stop has nothing to stop.
+#
+#   bin/dev [irb args]
+#
+# Exit 75 = Ruby, the bundle or a C toolchain is missing: run bin/setup.
 set -euo pipefail
-cd "$(dirname "$0")/.."
-bundle exec rackup
+# shellcheck source-path=SCRIPTDIR source=_dx.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_dx.sh"
+cd "$ROOT" || exit 1
+
+use_ruby
+require_gems
+require_toolchain
+bundle exec rake compile
+exec bin/console "$@"
