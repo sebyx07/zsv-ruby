@@ -12,96 +12,168 @@ VALUE eZSVError = Qnil;
 VALUE eMalformedCSVError = Qnil;
 VALUE eInvalidEncodingError = Qnil;
 
-/* GC marking function for Parser */
-static void zsv_parser_mark(void *ptr)
-{
-    zsv_ruby_parser_t *parser = (zsv_ruby_parser_t *)ptr;
-    if (!parser)
-        return;
+static ID id_file_p;
+static ID id_read;
+static ID id_to_path;
+static ID id_eof_p;
 
-    rb_gc_mark(parser->io);
-    rb_gc_mark(parser->headers);
-    rb_gc_mark(parser->current_row);
-    rb_gc_mark(parser->row_buffer);
-    rb_gc_mark(parser->options.header_array);
+static void zsv_parser_gc_mark(void *ptr)
+{
+    zsv_parser_mark((zsv_ruby_parser_t *)ptr);
 }
 
-/* GC freeing function for Parser */
+static void zsv_parser_gc_compact(void *ptr)
+{
+    zsv_parser_compact((zsv_ruby_parser_t *)ptr);
+}
+
 static void zsv_parser_gc_free(void *ptr)
 {
     zsv_parser_free((zsv_ruby_parser_t *)ptr);
 }
 
-/* Size function for GC */
-static size_t zsv_parser_memsize(const void *ptr)
+static size_t zsv_parser_gc_memsize(const void *ptr)
 {
-    return ptr ? sizeof(zsv_ruby_parser_t) : 0;
+    return zsv_parser_memsize((const zsv_ruby_parser_t *)ptr);
 }
 
-/* Data type definition */
+/* Not write-barrier protected: the parser stores VALUEs (row cells, headers)
+ * in C memory without RB_OBJ_WRITE, so it is always rescanned by the GC. */
 static const rb_data_type_t zsv_parser_type = {
     .wrap_struct_name = "ZSV::Parser",
     .function =
         {
-            .dmark = zsv_parser_mark,
+            .dmark = zsv_parser_gc_mark,
             .dfree = zsv_parser_gc_free,
-            .dsize = zsv_parser_memsize,
+            .dsize = zsv_parser_gc_memsize,
+            .dcompact = zsv_parser_gc_compact,
         },
     .flags = RUBY_TYPED_FREE_IMMEDIATELY,
 };
 
-/* Unwrap parser from Ruby object */
-static zsv_ruby_parser_t *get_parser(VALUE self)
+/* Unwrap the parser struct without checking that it was initialized */
+static zsv_ruby_parser_t *get_parser_struct(VALUE self)
 {
     zsv_ruby_parser_t *parser;
     TypedData_Get_Struct(self, zsv_ruby_parser_t, &zsv_parser_type, parser);
     return parser;
 }
 
-/* Wrap parser in Ruby object */
-static VALUE wrap_parser(zsv_ruby_parser_t *parser)
+/* Unwrap parser from Ruby object */
+static zsv_ruby_parser_t *get_parser(VALUE self)
 {
-    return TypedData_Wrap_Struct(cParser, &zsv_parser_type, parser);
+    zsv_ruby_parser_t *parser = get_parser_struct(self);
+    if (parser->source_kind == ZSV_SOURCE_NONE) {
+        rb_raise(eZSVError, "uninitialized ZSV::Parser");
+    }
+    return parser;
 }
 
-/* Allocate function for Parser class */
+/* Allocate function for Parser class: the struct is owned by the object from
+ * the start, so an exception during initialize cannot leak it */
 static VALUE zsv_parser_alloc(VALUE klass)
 {
-    return TypedData_Wrap_Struct(klass, &zsv_parser_type, NULL);
+    zsv_ruby_parser_t *parser;
+    VALUE obj = TypedData_Make_Struct(klass, zsv_ruby_parser_t, &zsv_parser_type, parser);
+    zsv_parser_init_struct(parser);
+    return obj;
+}
+
+/* A String with a line break is CSV data. Without one it is a path when such
+ * a file exists, or when it has no comma (so "data.csv" missing still raises
+ * Errno::ENOENT); otherwise it is a single CSV line such as "a,b". */
+static bool zsv_string_is_csv_data(VALUE string)
+{
+    const char *ptr = RSTRING_PTR(string);
+    long len = RSTRING_LEN(string);
+
+    if (memchr(ptr, '\n', len) || memchr(ptr, '\r', len) || memchr(ptr, '\0', len)) {
+        return true;
+    }
+    if (RTEST(rb_funcall(rb_cFile, id_file_p, 1, string))) {
+        return false;
+    }
+    /* File.file? allocates: re-read the pointer, the bytes may have moved */
+    return memchr(RSTRING_PTR(string), ',', len) != NULL;
 }
 
 /*
  * call-seq:
- *   ZSV::Parser.new(io, **options) -> parser
+ *   ZSV::Parser.new(source, **options) -> parser
  *
- * Creates a new parser for the given IO object.
+ * Creates a new parser. +source+ is a path-like object (#to_path, such as a
+ * Pathname), an IO-like object (anything responding to #read), a file path,
+ * or CSV data. A File answers both #to_path and #read and is read as a
+ * stream, from its current position; a Pathname also answers #read (the
+ * whole file on every call) and is opened as a path. A String is treated as
+ * CSV data when it contains a line break, or a comma and no such file
+ * exists; use Parser.from_string or Parser.from_path to avoid the guess.
  */
 static VALUE rb_zsv_parser_initialize(int argc, VALUE *argv, VALUE self)
 {
-    VALUE io, opts;
-    rb_scan_args(argc, argv, "11", &io, &opts);
+    VALUE source, opts;
+    rb_scan_args(argc, argv, "11", &source, &opts);
 
-    zsv_ruby_parser_t *parser;
+    zsv_ruby_parser_t *parser = get_parser_struct(self);
 
-    if (TYPE(io) == T_STRING) {
-        const char *str = StringValueCStr(io);
-
-        /* Detect if it's a file path or CSV content */
-        /* If it contains newlines or commas and doesn't exist as a file, treat as CSV data */
-        if (strchr(str, '\n') != NULL || strchr(str, ',') != NULL) {
-            /* Looks like CSV content, parse as string */
-            parser = zsv_parser_new_from_string(io, opts);
+    if (RB_TYPE_P(source, T_STRING)) {
+        if (zsv_string_is_csv_data(source)) {
+            zsv_parser_init_string(parser, source, opts);
         } else {
-            /* Try as file path */
-            parser = zsv_parser_new_from_path(str, opts);
+            zsv_parser_init_path(parser, source, opts);
         }
+    } else if (rb_respond_to(source, id_to_path) && !rb_respond_to(source, id_eof_p)) {
+        zsv_parser_init_path(parser, source, opts);
+    } else if (rb_respond_to(source, id_read)) {
+        zsv_parser_init_io(parser, source, opts);
     } else {
-        /* IO object */
-        parser = zsv_parser_new_from_io(io, opts);
+        rb_raise(rb_eTypeError, "expected a String, path or IO-like object, got %s",
+                 rb_obj_classname(source));
     }
 
-    DATA_PTR(self) = parser;
     return self;
+}
+
+/* Allocate a parser object of +klass+; it frees itself if init raises */
+static VALUE zsv_new_parser_object(VALUE klass, zsv_ruby_parser_t **parser)
+{
+    VALUE obj = zsv_parser_alloc(klass);
+    *parser = get_parser_struct(obj);
+    return obj;
+}
+
+/*
+ * call-seq:
+ *   ZSV::Parser.from_string(csv, **options) -> parser
+ *
+ * Creates a parser over CSV data held in a String (never a file path).
+ */
+static VALUE rb_zsv_parser_s_from_string(int argc, VALUE *argv, VALUE klass)
+{
+    VALUE string, opts;
+    rb_scan_args(argc, argv, "11", &string, &opts);
+
+    zsv_ruby_parser_t *parser;
+    VALUE obj = zsv_new_parser_object(klass, &parser);
+    zsv_parser_init_string(parser, string, opts);
+    return obj;
+}
+
+/*
+ * call-seq:
+ *   ZSV::Parser.from_path(path, **options) -> parser
+ *
+ * Creates a parser over the file at +path+ (a String or Pathname).
+ */
+static VALUE rb_zsv_parser_s_from_path(int argc, VALUE *argv, VALUE klass)
+{
+    VALUE path, opts;
+    rb_scan_args(argc, argv, "11", &path, &opts);
+
+    zsv_ruby_parser_t *parser;
+    VALUE obj = zsv_new_parser_object(klass, &parser);
+    zsv_parser_init_path(parser, path, opts);
+    return obj;
 }
 
 /*
@@ -112,24 +184,26 @@ static VALUE rb_zsv_parser_initialize(int argc, VALUE *argv, VALUE self)
  */
 static VALUE rb_zsv_parser_shift(VALUE self)
 {
-    zsv_ruby_parser_t *parser = get_parser(self);
-    return zsv_parser_shift(parser);
+    return zsv_parser_shift(get_parser(self));
 }
 
 /*
  * call-seq:
- *   parser.each {|row| block } -> nil
+ *   parser.each {|row| block } -> parser
  *   parser.each -> enumerator
  *
- * Iterates over all rows.
+ * Iterates over the remaining rows. Aliased as #each_row.
  */
 static VALUE rb_zsv_parser_each(VALUE self)
 {
     RETURN_ENUMERATOR(self, 0, 0);
 
     zsv_ruby_parser_t *parser = get_parser(self);
-    zsv_parser_each(parser);
-    return Qnil;
+    VALUE row;
+    while (!NIL_P(row = zsv_parser_shift(parser))) {
+        rb_yield(row);
+    }
+    return self;
 }
 
 /*
@@ -140,8 +214,7 @@ static VALUE rb_zsv_parser_each(VALUE self)
  */
 static VALUE rb_zsv_parser_rewind(VALUE self)
 {
-    zsv_ruby_parser_t *parser = get_parser(self);
-    zsv_parser_rewind(parser);
+    zsv_parser_rewind(get_parser(self));
     return Qnil;
 }
 
@@ -153,8 +226,7 @@ static VALUE rb_zsv_parser_rewind(VALUE self)
  */
 static VALUE rb_zsv_parser_close(VALUE self)
 {
-    zsv_ruby_parser_t *parser = get_parser(self);
-    zsv_parser_close(parser);
+    zsv_parser_close(get_parser(self));
     return Qnil;
 }
 
@@ -166,8 +238,7 @@ static VALUE rb_zsv_parser_close(VALUE self)
  */
 static VALUE rb_zsv_parser_headers_get(VALUE self)
 {
-    zsv_ruby_parser_t *parser = get_parser(self);
-    return zsv_parser_headers(parser);
+    return zsv_parser_headers(get_parser(self));
 }
 
 /*
@@ -178,8 +249,26 @@ static VALUE rb_zsv_parser_headers_get(VALUE self)
  */
 static VALUE rb_zsv_parser_closed_p(VALUE self)
 {
-    zsv_ruby_parser_t *parser = get_parser(self);
-    return zsv_parser_closed(parser) ? Qtrue : Qfalse;
+    return zsv_parser_closed(get_parser(self)) ? Qtrue : Qfalse;
+}
+
+static VALUE zsv_read_all(VALUE parser_obj)
+{
+    zsv_ruby_parser_t *parser = get_parser(parser_obj);
+    VALUE result = rb_ary_new();
+    VALUE row;
+
+    while (!NIL_P(row = zsv_parser_shift(parser))) {
+        rb_ary_push(result, row);
+    }
+    return result;
+}
+
+/* rb_ensure callback: close the parser even if parsing or the block raised */
+static VALUE zsv_close_parser_object(VALUE parser_obj)
+{
+    zsv_parser_close(get_parser(parser_obj));
+    return Qnil;
 }
 
 /*
@@ -196,21 +285,11 @@ static VALUE rb_zsv_foreach(int argc, VALUE *argv, VALUE klass)
 
     RETURN_ENUMERATOR(klass, argc, argv);
 
-    Check_Type(path, T_STRING);
+    zsv_ruby_parser_t *parser;
+    VALUE parser_obj = zsv_new_parser_object(cParser, &parser);
+    zsv_parser_init_path(parser, path, opts);
 
-    zsv_ruby_parser_t *parser = zsv_parser_new_from_path(StringValueCStr(path), opts);
-    VALUE parser_obj = wrap_parser(parser);
-
-    /* Ensure cleanup even if exception occurs */
-    int state;
-    rb_protect(rb_zsv_parser_each, parser_obj, &state);
-
-    zsv_parser_close(parser);
-
-    if (state) {
-        rb_jump_tag(state);
-    }
-
+    rb_ensure(rb_zsv_parser_each, parser_obj, zsv_close_parser_object, parser_obj);
     return Qnil;
 }
 
@@ -228,16 +307,11 @@ static VALUE rb_zsv_parse(int argc, VALUE *argv, VALUE klass)
 
     Check_Type(string, T_STRING);
 
-    zsv_ruby_parser_t *parser = zsv_parser_new_from_string(string, opts);
-    VALUE result = rb_ary_new();
+    zsv_ruby_parser_t *parser;
+    VALUE parser_obj = zsv_new_parser_object(cParser, &parser);
+    zsv_parser_init_string(parser, string, opts);
 
-    VALUE row;
-    while (!NIL_P(row = zsv_parser_shift(parser))) {
-        rb_ary_push(result, row);
-    }
-
-    zsv_parser_free(parser);
-    return result;
+    return rb_ensure(zsv_read_all, parser_obj, zsv_close_parser_object, parser_obj);
 }
 
 /*
@@ -252,18 +326,11 @@ static VALUE rb_zsv_read(int argc, VALUE *argv, VALUE klass)
     (void)klass;
     rb_scan_args(argc, argv, "11", &path, &opts);
 
-    Check_Type(path, T_STRING);
+    zsv_ruby_parser_t *parser;
+    VALUE parser_obj = zsv_new_parser_object(cParser, &parser);
+    zsv_parser_init_path(parser, path, opts);
 
-    zsv_ruby_parser_t *parser = zsv_parser_new_from_path(StringValueCStr(path), opts);
-    VALUE result = rb_ary_new();
-
-    VALUE row;
-    while (!NIL_P(row = zsv_parser_shift(parser))) {
-        rb_ary_push(result, row);
-    }
-
-    zsv_parser_free(parser);
-    return result;
+    return rb_ensure(zsv_read_all, parser_obj, zsv_close_parser_object, parser_obj);
 }
 
 /*
@@ -280,10 +347,8 @@ static VALUE rb_zsv_open(int argc, VALUE *argv, VALUE klass)
     (void)klass;
     rb_scan_args(argc, argv, "11:", &path, &mode, &opts);
 
-    Check_Type(path, T_STRING);
-
     /* If mode is a hash, it's actually the options */
-    if (!NIL_P(mode) && TYPE(mode) == T_HASH) {
+    if (!NIL_P(mode) && RB_TYPE_P(mode, T_HASH)) {
         opts = mode;
         mode = Qnil;
     }
@@ -293,19 +358,12 @@ static VALUE rb_zsv_open(int argc, VALUE *argv, VALUE klass)
         rb_raise(rb_eNotImpError, "Only read mode is currently supported");
     }
 
-    zsv_ruby_parser_t *parser = zsv_parser_new_from_path(StringValueCStr(path), opts);
-    VALUE parser_obj = wrap_parser(parser);
+    zsv_ruby_parser_t *parser;
+    VALUE parser_obj = zsv_new_parser_object(cParser, &parser);
+    zsv_parser_init_path(parser, path, opts);
 
     if (rb_block_given_p()) {
-        int state;
-        VALUE result = rb_protect(rb_yield, parser_obj, &state);
-        zsv_parser_close(parser);
-
-        if (state) {
-            rb_jump_tag(state);
-        }
-
-        return result;
+        return rb_ensure(rb_yield, parser_obj, zsv_close_parser_object, parser_obj);
     }
 
     return parser_obj;
@@ -314,6 +372,16 @@ static VALUE rb_zsv_open(int argc, VALUE *argv, VALUE klass)
 /* Initialize the extension */
 void Init_zsv(void)
 {
+    /* No mutable global state: parsers are per-object and never shareable */
+#ifdef HAVE_RB_EXT_RACTOR_SAFE
+    rb_ext_ractor_safe(true);
+#endif
+
+    id_file_p = rb_intern("file?");
+    id_read = rb_intern("read");
+    id_to_path = rb_intern("to_path");
+    id_eof_p = rb_intern("eof?");
+
     /* Define module */
     mZSV = rb_define_module("ZSV");
 
@@ -321,6 +389,8 @@ void Init_zsv(void)
     cParser = rb_define_class_under(mZSV, "Parser", rb_cObject);
     rb_include_module(cParser, rb_mEnumerable);
     rb_define_alloc_func(cParser, zsv_parser_alloc);
+    rb_define_singleton_method(cParser, "from_string", rb_zsv_parser_s_from_string, -1);
+    rb_define_singleton_method(cParser, "from_path", rb_zsv_parser_s_from_path, -1);
     rb_define_method(cParser, "initialize", rb_zsv_parser_initialize, -1);
     rb_define_method(cParser, "shift", rb_zsv_parser_shift, 0);
     rb_define_method(cParser, "each", rb_zsv_parser_each, 0);
@@ -343,4 +413,5 @@ void Init_zsv(void)
 
     /* Initialize submodules */
     Init_zsv_options();
+    Init_zsv_parser();
 }

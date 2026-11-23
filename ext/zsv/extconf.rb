@@ -1,154 +1,102 @@
 # frozen_string_literal: true
 
 require 'mkmf'
-require 'net/http'
-require 'uri'
 require 'fileutils'
-require 'rubygems/package'
-require 'zlib'
-require 'openssl'
+require 'shellwords'
+require_relative 'upstream'
 
-# ZSV version to compile against
-ZSV_VERSION = '1.4.3' # zsv C library version (not gem version)
-ZSV_URL = "https://github.com/liquidaty/zsv/archive/refs/tags/v#{ZSV_VERSION}.tar.gz".freeze
-# Use absolute path relative to the original extconf.rb location
-EXTCONF_DIR = File.expand_path(__dir__)
-VENDOR_DIR = File.join(EXTCONF_DIR, 'vendor')
-ZSV_DIR = File.join(VENDOR_DIR, "zsv-#{ZSV_VERSION}")
+# Builds the zsv C library from the source vendored in ext/zsv/vendor/zsv (see
+# ZSV_UPSTREAM and `rake zsv:vendor`), then links it statically into the
+# extension. No network access happens here.
+#
+# The default build targets the baseline CPU of the architecture (SSE2 on
+# x86_64, NEON on aarch64), so a binary built on one machine (a Docker image
+# built in CI, say) runs on any other machine of that architecture instead of
+# dying with SIGILL.
+#
+# Options (`gem install zsv -- --enable-native`, or ZSV_NATIVE=1):
+#   --enable-native       build for the build machine's CPU (-march=native,
+#                         AVX2 when it has it). Only for binaries that run
+#                         where they were built.
+#   --enable-cross-build  set by the Rakefile for rake-compiler-dock builds of
+#                         precompiled gems; always baseline, ignores
+#                         --enable-native.
 
-def download_file(url, destination, redirect_limit = 10, verify_ssl = true)
-  abort('Too many redirects') if redirect_limit.zero?
-
-  uri = URI.parse(url)
-  http = Net::HTTP.new(uri.host, uri.port)
-
-  if uri.scheme == 'https'
-    http.use_ssl = true
-    http.verify_mode = verify_ssl ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE
-    http.ca_file = ENV['SSL_CERT_FILE'] if ENV['SSL_CERT_FILE'] && verify_ssl
+def vendored_zsv_dir
+  unless ZSVUpstream.vendored_current?
+    abort <<~MSG
+      The zsv #{ZSVUpstream.version} C source is missing from #{ZSVUpstream::VENDOR_DIR}
+      (or was vendored from a different ZSV_UPSTREAM pin).
+      In a git checkout run `bundle exec rake zsv:vendor`; released gems always include it.
+    MSG
   end
-
-  request = Net::HTTP::Get.new(uri.request_uri)
-
-  begin
-    response = http.request(request)
-  rescue OpenSSL::SSL::SSLError => e
-    if verify_ssl
-      # Retry without SSL verification (GitHub is trusted)
-      warn "SSL verification failed (#{e.message}), retrying without verification..."
-      return download_file(url, destination, redirect_limit, false)
-    end
-    raise
-  end
-
-  case response
-  when Net::HTTPRedirection
-    download_file(response['location'], destination, redirect_limit - 1, verify_ssl)
-  when Net::HTTPSuccess
-    File.binwrite(destination, response.body)
-  else
-    abort("Failed to download: #{response.code} #{response.message}")
-  end
+  ZSVUpstream::VENDOR_DIR
 end
 
-def extract_tar_gz(tarball, destination)
-  Gem::Package::TarReader.new(Zlib::GzipReader.open(tarball)) do |tar|
-    tar.each do |entry|
-      dest_path = File.join(destination, entry.full_name)
+def cross_compiling?
+  enable_config('cross-build', false)
+end
 
-      if entry.directory?
-        FileUtils.mkdir_p(dest_path)
-      elsif entry.file?
-        FileUtils.mkdir_p(File.dirname(dest_path))
-        File.binwrite(dest_path, entry.read)
-        FileUtils.chmod(entry.header.mode, dest_path)
-      end
-    end
+def native_build?
+  !cross_compiling? && enable_config('native', ENV['ZSV_NATIVE'] == '1')
+end
+
+def configure_args
+  # --minimal drops ZSV_EXTRAS (row limits, progress callbacks, sidecar
+  # overwrite files), which this gem does not use and which needs sqlite3.h
+  # from upstream's app/ tree, deliberately not vendored.
+  args = %w[--minimal=yes]
+  # SSE2 (x86_64) and NEON (aarch64) are part of the baseline ABI and still
+  # select zsv's SIMD scanner; only AVX/AVX2 and -march=native are dropped.
+  args += %w[--arch=none --force-avx2=no --force-avx=no] unless native_build?
+  args
+end
+
+def build_env
+  env = { 'CC' => RbConfig::CONFIG['CC'], 'AR' => RbConfig::CONFIG['AR'] }
+  env['CROSS_COMPILING'] = 'yes' if cross_compiling?
+  env.compact
+end
+
+def run!(env, *cmd)
+  puts "#{env.map { |k, v| "#{k}=#{v.shellescape}" }.join(' ')} #{cmd.shelljoin}"
+  system(env, *cmd) or abort("zsv build failed: #{cmd.shelljoin}")
+end
+
+# Builds a private copy so the vendored tree stays pristine and builds for
+# several Rubies or platforms never share a config.mk.
+def build_zsv(source_dir, build_dir)
+  FileUtils.rm_rf(build_dir)
+  FileUtils.cp_r(source_dir, build_dir)
+  env = build_env
+  Dir.chdir(build_dir) do
+    run!(env, './configure', *configure_args)
+    run!(env, find_executable('gmake') || 'make', '-C', 'src', 'build', "VERSION=#{ZSVUpstream.version}")
   end
+  Dir.glob(File.join(build_dir, 'build', '*', 'rel', '*', 'lib', 'libzsv.a')).first or
+    abort("libzsv.a not found under #{build_dir}/build")
 end
 
-def download_and_extract_zsv
-  return if File.directory?(ZSV_DIR)
+zsv_build_dir = File.join(Dir.pwd, 'zsv-build')
+puts "Building zsv #{ZSVUpstream.version} (#{native_build? ? 'native CPU' : 'portable baseline CPU'})"
+zsv_lib = build_zsv(vendored_zsv_dir, zsv_build_dir)
+include_dir = File.join(zsv_build_dir, 'include')
 
-  puts "Downloading zsv #{ZSV_VERSION}..."
-  FileUtils.mkdir_p(VENDOR_DIR)
-
-  tarball = File.join(VENDOR_DIR, 'zsv.tar.gz')
-  download_file(ZSV_URL, tarball)
-
-  puts 'Extracting zsv...'
-  extract_tar_gz(tarball, VENDOR_DIR)
-  FileUtils.rm_f(tarball)
-
-  abort('zsv directory not found after extraction') unless File.directory?(ZSV_DIR)
-  puts "zsv #{ZSV_VERSION} downloaded successfully"
-end
-
-def build_zsv
-  puts 'Building zsv library...'
-
-  # Build zsv static library
-  Dir.chdir(ZSV_DIR) do
-    # Configure zsv
-    system('./configure') or abort('Failed to configure zsv') unless File.exist?('config.mk')
-
-    # Build the library
-    Dir.chdir('src') do
-      system('make', 'build') or abort('Failed to build zsv library')
-    end
-  end
-
-  puts 'zsv library built successfully'
-end
-
-# Download and build zsv
-download_and_extract_zsv
-build_zsv
-
-# Determine build directory based on platform
-platform_dir = if RUBY_PLATFORM =~ /darwin/
-                 'Darwin'
-               elsif RUBY_PLATFORM =~ /linux/
-                 'Linux'
-               else
-                 'generic'
-               end
-
-# Find the built library - compiler name varies (gcc, gcc-14, clang, etc.)
-# Search for libzsv.a in the build directory
-build_rel_dir = File.join(ZSV_DIR, 'build', platform_dir, 'rel')
-zsv_lib = Dir.glob(File.join(build_rel_dir, '*', 'lib', 'libzsv.a')).first
-
-abort("libzsv.a not found in #{build_rel_dir}/*/lib/") unless zsv_lib && File.exist?(zsv_lib)
-
-zsv_lib_dir = File.dirname(zsv_lib)
-
-# Add zsv include path
-include_dir = File.join(ZSV_DIR, 'include')
-
-# Add compiler and linker flags
 $INCFLAGS << " -I#{include_dir}"
 $CFLAGS << ' -std=c99 -Wall -Wextra'
-$CFLAGS << ' -O3' # Optimization level
+$CFLAGS << ' -O3'
 
-# Configure include and lib paths
-dir_config('zsv', include_dir, zsv_lib_dir)
-
-# Find zsv header
 abort("zsv.h not found in #{include_dir}") unless have_header('zsv.h')
 
-# Link the static library
 $LOCAL_LIBS << " #{zsv_lib}"
 
-# Platform-specific adjustments
-if RUBY_PLATFORM =~ /darwin/
+if RUBY_PLATFORM.include?('darwin')
   $LDFLAGS << ' -framework Foundation'
-elsif RUBY_PLATFORM =~ /linux/
+elsif RUBY_PLATFORM.include?('linux')
   $LIBS << ' -lpthread -lm'
 end
 
-# Check for Ruby 3.2+ hash capacity preallocation
+# Ruby 3.2+ hash capacity preallocation
 have_func('rb_hash_new_capa')
 
-# Create Makefile
 create_makefile('zsv/zsv')
