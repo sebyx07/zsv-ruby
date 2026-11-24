@@ -1,23 +1,30 @@
 ## Symptom
-Scheduled security-release check for sebyx07/zsv-ruby, task tsk_3810c139926061df31bdd290b2048f8d. Determine whether a confirmed security fix needs an off-cycle release. No application failure was reported or reproduced.
+
+The scheduled security check asks whether a confirmed security fix requires an off-cycle release, or whether a shipped component has an open advisory. No specific vulnerability was reported in the task.
 
 ## Evidence
-- `git log -8 --tags --no-walk --format='%H %cI %D %s'` exited 0. Latest local release tag: `v1.4.4`, commit `0a2b7ffd0e8d15a479045ee00eb1d49ae6ab0eb8`.
-- Authenticated `gh_read` default-branch history confirms current main is `aa82c53ae228`, immediately following that release commit. No fetch was performed, because the runner owns repository mutations.
-- `git log --format='%h %cI %s' v1.4.4..origin/main -- lib ext zsv.gemspec` and `git diff --stat v1.4.4 origin/main -- lib ext zsv.gemspec` exited 0 with no output. `git show --stat --oneline aa82c53ae22823979d34a95f3f8b8189f1ac74a1` lists only development/configuration/documentation changes.
-- Opened https://api.github.com/repos/sebyx07/zsv-ruby/releases/latest : HTTP 200, `tag_name: v1.4.4`, `target_commitish: 0a2b7ffd0e8d15a479045ee00eb1d49ae6ab0eb8`, published `2026-11-23T11:37:54Z`, not a draft or prerelease. Its notes already include the crash, lifetime and offline-packaging fixes.
-- Opened https://api.github.com/repos/liquidaty/zsv/security-advisories and https://api.github.com/repos/sebyx07/zsv-ruby/security-advisories : each HTTP 200, body `[]`. These are public advisory listings, not proof that private advisories do not exist.
-- Opened https://api.github.com/repos/liquidaty/zsv/releases/latest : HTTP 200, `tag_name: v1.4.4`, not a draft or prerelease. Read its complete release notes: no security fix is identified. No newer full upstream release is reported.
-- `ext/zsv/ZSV_UPSTREAM:6` pins `1.4.4`; `lib/zsv/version.rb:4` is `1.4.4`; CHANGELOG Unreleased is empty. `zsv.gemspec:43-48` declares only development gem dependencies, no runtime gem dependencies.
-- Dependabot alerts were not read. MCP discovery found no connected tools; `gh_read` has no alerts resource. The previous-checkup filing signal was also supplied as missing and was not inferred.
+
+`git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main` returned `v1.4.4`. `git log --format='%h %cI %s' v1.4.4..origin/main -- 'lib/**' 'ext/**' zsv.gemspec` returned no commits. The local `origin/main` was `0fa27e7`, and the tag resolved to `0a2b7ff`. The runner owns fetches, so this checkout was not refreshed during the run. Authenticated default branch history also returned `0fa27e7` as its latest commit.
+
+The public GitHub advisory endpoints for [upstream](https://api.github.com/repos/liquidaty/zsv/security-advisories) and [this repository](https://api.github.com/repos/sebyx07/zsv-ruby/security-advisories) each returned `[]`. The [latest upstream release](https://api.github.com/repos/liquidaty/zsv/releases/latest) identifies `v1.4.4`, matching `ext/zsv/ZSV_UPSTREAM`. Open repository issues returned none. These public results do not include private advisories or Dependabot alerts.
 
 ## Root cause
-No qualifying unreleased security fix was found: the shipped-code commit window is empty, the latest published gem release already carries the prior fixes, both public advisory listings are empty, and the upstream latest release equals the pin. This supports withholding a release, not a blanket security clearance. Authenticated Dependabot enumeration remains an access gap.
+
+No qualifying unreleased shipping fix is visible in the checked local release window, and no newer upstream release exists in the public latest-release response. The advisory check is incomplete: this run has no tool for the repository's authenticated Dependabot alerts or private security advisories. No vulnerability or root cause was established.
 
 ## Fix
-No source, version, pin or infrastructure changes. No release PR or advisory issue is warranted by the evidence gathered. No PR.md is written, to avoid proposing an empty release. Recorded the unavailable Dependabot read capability in `tmp/dz/devops/blocked.json`. No separate defect was found to file as a raw task. No live-system mutations were made.
+
+No release or source change was justified by the available evidence. No live system was changed. Authenticated security alert access and runner-refreshed tags are needed to complete the check. Tests were not run because no executable code changed.
 
 ## Verify
-Run `git log --format='%h %cI %s' v1.4.4..origin/main -- lib ext zsv.gemspec` against the same refs: expected exit 0 and no output. Recheck the public API URLs above for `[]` advisory lists and latest release `v1.4.4`. Completing the security check additionally requires an authenticated read of `GET /repos/sebyx07/zsv-ruby/dependabot/alerts`; this run cannot state its result. Tests, sanitizers and application startup were not run because no executable code changed.
 
-no release: no qualifying unreleased security fix found; Dependabot alert review remains blocked by unavailable authenticated access.
+After refreshing the runner's checkout, resolve the latest reachable release tag and inspect the resulting window:
+
+```sh
+release=$(git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main) &&
+  git log --format='%h %cI %s' "$release"..origin/main -- 'lib/**' 'ext/**' zsv.gemspec
+```
+
+The observed checkout printed nothing for this log. Separately inspect authenticated Dependabot alerts and private advisories; they were not accessible in this run.
+
+no release: no qualifying unreleased security fix was found, and authenticated alert review remains blocked.
