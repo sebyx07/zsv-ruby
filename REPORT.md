@@ -18,6 +18,13 @@ No release or source change was justified by the available evidence. No live sys
 
 ## Verify
 
-After refreshing the runner's checkout, run `git log --format='%h %cI %s' v1.4.4..origin/main -- 'lib/**' 'ext/**' zsv.gemspec`. The observed checkout printed nothing. Separately inspect authenticated Dependabot alerts and private advisories; they were not accessible in this run.
+After refreshing the runner's checkout, resolve the latest reachable release tag and inspect the resulting window:
+
+```sh
+release=$(git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main) &&
+  git log --format='%h %cI %s' "$release"..origin/main -- 'lib/**' 'ext/**' zsv.gemspec
+```
+
+The observed checkout printed nothing for this log. Separately inspect authenticated Dependabot alerts and private advisories; they were not accessible in this run.
 
 no release: no qualifying unreleased security fix was found, and authenticated alert review remains blocked.
