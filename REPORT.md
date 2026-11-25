@@ -1,30 +1,23 @@
 ## Symptom
 
-The scheduled security check asks whether a confirmed security fix requires an off-cycle release, or whether a shipped component has an open advisory. No specific vulnerability was reported in the task.
+The scheduled release check on 2026-11-25 asks whether unreleased changes warrant a new gem release. No specific user-facing failure was reported.
 
 ## Evidence
 
-`git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main` returned `v1.4.4`. `git log --format='%h %cI %s' v1.4.4..origin/main -- 'lib/**' 'ext/**' zsv.gemspec` returned no commits. The local `origin/main` was `0fa27e7`, and the tag resolved to `0a2b7ff`. The runner owns fetches, so this checkout was not refreshed during the run. Authenticated default branch history also returned `0fa27e7` as its latest commit.
+`git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main` returned `v1.4.4`. `git log --format='%h %cI %s' v1.4.4..origin/main -- 'lib/**' 'ext/**' zsv.gemspec` printed nothing. The release tag points to `0a2b7ff`, and local `origin/main` points to `1ffd307`, which also matches the latest default branch commit returned by GitHub. The runner owns fetches, so tags were not refreshed during this run.
 
-The public GitHub advisory endpoints for [upstream](https://api.github.com/repos/liquidaty/zsv/security-advisories) and [this repository](https://api.github.com/repos/sebyx07/zsv-ruby/security-advisories) each returned `[]`. The [latest upstream release](https://api.github.com/repos/liquidaty/zsv/releases/latest) identifies `v1.4.4`, matching `ext/zsv/ZSV_UPSTREAM`. Open repository issues returned none. These public results do not include private advisories or Dependabot alerts.
+`CHANGELOG.md` has an empty Unreleased section. The only Gemfile change in the release window adds development-only `irb` for the console. The gem version and zsv pin are both 1.4.4. GitHub reports the 1.4.4 release workflow completed successfully and the latest main CI run completed successfully. The previous checkup's filings were unavailable in the supplied signals.
 
 ## Root cause
 
-No qualifying unreleased shipping fix is visible in the checked local release window, and no newer upstream release exists in the public latest-release response. The advisory check is incomplete: this run has no tool for the repository's authenticated Dependabot alerts or private security advisories. No vulnerability or root cause was established.
+There are no shipping code changes since the latest locally reachable release tag. The available development tooling and documentation changes do not warrant an empty gem release.
 
 ## Fix
 
-No release or source change was justified by the available evidence. No live system was changed. Authenticated security alert access and runner-refreshed tags are needed to complete the check. Tests were not run because no executable code changed.
+No release bump or source change was made. No live system was changed. No pull request is warranted. Tests were not run because no executable code changed.
 
 ## Verify
 
-After refreshing the runner's checkout, resolve the latest reachable release tag and inspect the resulting window:
+Run `git log --format='%h %cI %s' v1.4.4..origin/main -- 'lib/**' 'ext/**' zsv.gemspec` on a runner-refreshed checkout. In this run it printed nothing.
 
-```sh
-release=$(git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main) &&
-  git log --format='%h %cI %s' "$release"..origin/main -- 'lib/**' 'ext/**' zsv.gemspec
-```
-
-The observed checkout printed nothing for this log. Separately inspect authenticated Dependabot alerts and private advisories; they were not accessible in this run.
-
-no release: no qualifying unreleased security fix was found, and authenticated alert review remains blocked.
+no release: no user-facing shipping changes are waiting since 1.4.4.
