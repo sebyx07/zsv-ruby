@@ -1,23 +1,23 @@
 ## Symptom
 
-The scheduled check asks whether a confirmed security fix requires an off-cycle release or an advisory affects shipped code. No specific vulnerability was reported.
+The scheduled security release check asks whether a confirmed advisory affecting shipped code requires an off-cycle release, upstream upgrade, or issue. No specific advisory was supplied.
 
 ## Evidence
 
-The authenticated default branch commit list identified `1ffd3079d882` as its head. The public tags API identified `v1.4.4` at `0a2b7ffd0e8d`. Authenticated commit reads show the four intervening commits changed REPORT.md, CLAUDE.md, onboarding and development files, but not `lib/`, `ext/` or `zsv.gemspec`.
+The local `git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main` returned `v1.4.4`. The shipping-path log from that tag to the locally available `origin/main` returned no commits. The tag resolves to `0a2b7ffd0e8d15a479045ee00eb1d49ae6ab0eb8`, and local `origin/main` resolves to `ad967bbed5420f67cc121029fb5d16f9fbcc8d38`. The GitHub default-branch commits reader also returned `ad967bbed542` as its newest commit. The pin and gem version are both 1.4.4.
 
-The public GitHub advisory endpoints for [this repository](https://api.github.com/repos/sebyx07/zsv-ruby/security-advisories) and [upstream](https://api.github.com/repos/liquidaty/zsv/security-advisories) returned `[]`. The [latest upstream release](https://api.github.com/repos/liquidaty/zsv/releases/latest) is `v1.4.4`, matching `ext/zsv/ZSV_UPSTREAM`. Public advisory results do not include private advisories or Dependabot alerts. The available authenticated GitHub reader does not expose those alerts and no GitHub MCP tools were connected.
+The public GitHub API endpoints for [upstream advisories](https://api.github.com/repos/liquidaty/zsv/security-advisories) and [gem advisories](https://api.github.com/repos/sebyx07/zsv-ruby/security-advisories) each returned `[]`. The available GitHub reader does not expose Dependabot alerts or authenticated private advisories, and fetching tags is not permitted in this run. No conclusion about those missing sources or tags is implied.
 
 ## Root cause
 
-No unreleased shipped-code commit was found, and no newer upstream release was shown. No vulnerability was established. The advisory assessment remains incomplete without authenticated Dependabot and private advisory access.
+No confirmed qualifying advisory or unreleased shipping fix was found in the sources available. The empty local shipping window rules out an off-cycle release from that window, but does not establish that no affected upstream advisory or Dependabot alert exists. The incomplete security check is caused by unavailable authenticated alert access and fresh tag synchronization, not by a reproduced product failure.
 
 ## Fix
 
-No release or source change was justified by the evidence available. No live system was changed. Tests were not run because no executable code changed. The missing security alert access is recorded in `tmp/dz/devops/blocked.json`.
+No release, upgrade, issue, or product code change was made. Access to authenticated Dependabot alerts, private repository advisories, and a fresh tag view is recorded as blocked. Public advisories alone do not justify changing the pin or version. Tests were not run because no executable code changed.
 
 ## Verify
 
-With an authorized GitHub security reader, inspect the repository's open Dependabot alerts and private advisories, and compare the current default branch to the latest release. The public [tag list](https://api.github.com/repos/sebyx07/zsv-ruby/tags) and authenticated commit reads in this run showed no shipped-code changes after `v1.4.4`; private alert results remain unknown.
+With fresh authorized refs and alert access, run `git log --format='%h %cI %s' "$(git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main)"..origin/main -- 'lib/**' 'ext/**' zsv.gemspec`. An empty result means no shipping commits in that refreshed window; separately inspect authenticated alerts and advisories before concluding the security check is complete.
 
-no release: no qualifying unreleased shipped-code fix was found, and authenticated alert review remains blocked.
+no release: no qualifying advisory or unreleased shipping fix was established; authenticated alerts and fresh tags were unavailable.
