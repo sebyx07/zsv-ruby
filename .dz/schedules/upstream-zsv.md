@@ -84,7 +84,7 @@ File one issue titled `zsv <new> upgrade needs the owner: <summary>` (skip if on
 - `CHANGELOG.md`, under `## [Unreleased]` → `### Changed`: `Upgraded the vendored zsv C library from <old> to <new>` with the upstream release link, plus one line per change a user of this gem can observe.
 - `git grep -n -F "$old" -- ':!CHANGELOG.md' ':!ext/zsv/vendor'`: fix docs that name the zsv version (not `lib/zsv/version.rb`).
 - Commit only: `ext/zsv/ZSV_UPSTREAM`, `ext/zsv/vendor/zsv/**`, `CHANGELOG.md`, the docs lines, and our C + specs if §5 needed them. Stage by path. Nothing under `.github/`, `.dz/`, `bin/`.
-- Title exactly `chore: zsv <new>` (the `release-due` and `health` checkups find it by that title). Body: upstream release and compare URLs; the SHA-256 and that both downloads matched; the list of zsv symbols this gem uses whose declaration changed, or "none"; `bin/check` and `bin/check asan` results; the before and after benchmark tables with Ruby version and CPU; what you could not verify, stated as missing.
+- Title exactly `chore: zsv <new>` (the `release-due` checkup finds it by that title). Body: upstream release and compare URLs; the SHA-256 and that both downloads matched; the list of zsv symbols this gem uses whose declaration changed, or "none"; `bin/check` and `bin/check asan` results; the before and after benchmark tables with Ruby version and CPU; what you could not verify, stated as missing.
 
 It merges on green (`CI OK`) like any PR. Do not open a release PR here.
 

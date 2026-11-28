@@ -8,7 +8,7 @@ Outside contributors do not change `.github/`, `bin/`, the `Rakefile`, the gemsp
 |---|---|---|
 | `workflows/ci.yml` | pull request, push to `main`, manual, `workflow_call` from `release.yml` | The gate. Ends in the aggregate job **`CI OK`** |
 | `workflows/canary.yml` | monthly cron (the 1st), manual | Ruby head; zsv upstream's latest release and `main` vendored in place of the pin (`scripts/vendor-zsv-ref.sh`), also under ASan + UBSan; the precompiled gems. **Not** part of `CI OK`; the monthly `upstream-zsv` and `improve` tasks read it |
-| `workflows/benchmark.yml` | push to `main`, manual | `rake bench` on x86_64 and arm64 Linux; output goes to the run's job summary. Not gating. Numbers live there, never in docs |
+| `workflows/benchmark.yml` | push to `main` that changes `ext/`, `lib/` or `benchmark/`, manual | `rake bench` on x86_64 and arm64 Linux; output goes to the run's job summary. Not gating. Numbers live there, never in docs |
 | `workflows/native-gems.yml` | `workflow_call` from `release.yml` and `canary.yml`, manual | The source gem and one precompiled gem per `NATIVE_PLATFORMS` entry in the `Rakefile` (rake-compiler-dock), each installed and smoke-tested on its own platform and every supported Ruby |
 | `workflows/release.yml` | push to `main` touching `lib/zsv/version.rb`, manual on `main` | Verify, build, publish, tag, GitHub Release |
 | `dependabot.yml` | weekly | Grouped bundler and actions updates with a 14-day cooldown. The maintainer agent is the only merger; there is no auto-merge workflow. zsv itself is not a Dependabot ecosystem: `upstream-zsv` follows it |
@@ -19,12 +19,13 @@ Outside contributors do not change `.github/`, `bin/`, the `Rakefile`, the gemsp
 
 | Job | Checks |
 |---|---|
+| `changes` | Reads the changed files: `code=false` when every one is `*.md` or under `docs/`. `check`, `test`, `sanitizers` and `package` then skip; anything unreadable counts as code |
 | `workflows` | actionlint + zizmor on `.github/workflows`; `bin/repo-guards` |
 | `check` | **`bin/check`**, unchanged, on `.ruby-version` and Linux x86_64 with `ZSV_REQUIRE_CLANG_FORMAT=1`: repo guards, RuboCop, clang-format, compile, RSpec. The only place lint runs |
-| `test` | compile + RSpec on every supported Ruby x OS/arch (x86_64 and arm64, Linux and macOS) |
+| `test` | compile + RSpec on every supported Ruby x OS/arch (x86_64 and arm64, Linux and macOS) on a push to `main` that is not docs-only, a manual run and a release; a pull request runs the floor and the newest Ruby on Linux x86_64 + arm64 |
 | `sanitizers` | the extension built with `-fsanitize=address,undefined`, the suite with the runtimes preloaded. `bin/check asan` is the same recipe |
 | `package` | `rake build`, install the gem into an empty `GEM_HOME` with the network disabled, require it, parse |
-| `ci-ok` (`CI OK`) | Fails unless every job above succeeded; skipped or cancelled counts as failed |
+| `ci-ok` (`CI OK`) | Fails unless every job above succeeded; cancelled counts as failed, and so does skipped unless `changes` said docs-only |
 
 Rules:
 
@@ -52,5 +53,5 @@ Rules:
 - Never `gem push`, `rake release` (it aborts on purpose), or push a `v*` tag. The tag is an output of the release, created after RubyGems has the gems.
 - A merge that does not change `version.rb` publishes nothing. Do not write "released" in a PR or issue until the gem is on rubygems.org: `gem info zsv --remote`.
 - A published version is never pushed again and never reused. Recovery for each failure point: `RELEASE.md` § If a release fails. A broken release: the owner yanks it, the fix is the next version.
-- The weekly `release-due` checkup (`.dz/schedules/release-due.md`) decides when a release PR is opened; `security-release` covers confirmed security fixes on the other days.
+- The weekly `release-due` checkup (`.dz/schedules/release-due.md`) decides when a release PR is opened; a fix for a published high or critical advisory in what ships is the one release the owner may cut off-cycle.
 - A breaking change needs the owner's decision before merge.

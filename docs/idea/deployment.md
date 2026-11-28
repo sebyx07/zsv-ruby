@@ -14,8 +14,6 @@ or site.
 - **What users install.** A precompiled gem where one matches their platform, otherwise the source
   gem, which compiles the vendored zsv on install with no network access.
 
-Outcome checks: the daily `health` checkup (`.dz/schedules/health.md`) verifies that `main` is
-green, the last release run succeeded, RubyGems serves the version, the release is tagged and the
-platform gems are complete. `.github/workflows/canary.yml` builds monthly against Ruby head and
+Outcome checks: a workflow run is its own verdict, and the platform files a fix when `main` is red. Nothing polls the published package or the site on a schedule: the `health` checkup was removed on 2026-11-28 (across the fleet it fired 270 times in 30 days and produced no merged fix). `.github/workflows/canary.yml` builds monthly against Ruby head and
 upstream zsv, and `.github/workflows/benchmark.yml` posts `rake bench` output for each push to
 `main`.

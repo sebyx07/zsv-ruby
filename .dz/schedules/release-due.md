@@ -1,6 +1,6 @@
 # Brief: is a release needed?
 
-Weekly checkup, Wednesdays 03:00 UTC, fired by `schedules: release-due` in `.dz/maintainer/maintainer.yml` as a devops task (`mode: devops`: a shell, and at most one pull request). It asks whether a release is needed now. The block below gathers facts and you make the call. A merge or a count never cuts a release, and the owner can still cut by hand.
+Weekly checkup, Mondays 09:00 UTC, fired by `schedules: release-due` in `.dz/maintainer/maintainer.yml` as a devops task (`mode: devops`: a shell, and at most one pull request). It asks whether a release is needed now. The block below gathers facts and you make the call. A merge or a count never cuts a release, and the owner can still cut by hand.
 
 ## The version is not yours to choose
 
@@ -24,7 +24,7 @@ Say why either way: a release PR opens with your reason, and a no ends your run 
 
 ## Security: the one off-cycle release
 
-A fix for a security advisory that a first-tier source confirms ships right away instead of waiting for Wednesday: CISA KEV, NVD, GitHub Security Advisories or the upstream project's own advisory. `.dz/schedules/security-release.md` asks this on the other days and defines what qualifies.
+A fix for a security advisory that a first-tier source confirms ships right away instead of waiting for Monday: CISA KEV, NVD, GitHub Security Advisories or the upstream project's own advisory. It qualifies only when it is published, rated high or critical (CVSS ≥ 7.0) or KEV-listed, and in code the gem ships; a dev-only, test or CI dependency never does. Nothing fires on the other days: the owner cuts that release, or it ships at the next weekly run.
 
 ## Decide
 

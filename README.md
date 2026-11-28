@@ -146,7 +146,7 @@ The suite compares ZSV's rows with `CSV`'s for the same input. These differences
 
 zsv scans input with SIMD instructions and the extension builds Ruby rows directly in C, so parsing is faster than the pure-Ruby `CSV`. How much depends on the shape of the data (row width, quoting), the options (rows as Hashes cost more than rows as Arrays), the CPU and the Ruby version, so this README does not carry a headline number.
 
-**Current numbers are produced by CI**: the [Benchmarks workflow](https://github.com/sebyx07/zsv-ruby/actions/workflows/benchmark.yml) runs on every push to `main`, on x86_64 and arm64 Linux, and prints the full output in each run's summary, with the Ruby version and commit.
+**Current numbers are produced by CI**: the [Benchmarks workflow](https://github.com/sebyx07/zsv-ruby/actions/workflows/benchmark.yml) runs on every push to `main` that changes the extension, the library or a benchmark, on x86_64 and arm64 Linux, and prints the full output in each run's summary, with the Ruby version and commit.
 
 As a guide, across the maintainers' runs of `bundle exec rake bench` on x86_64 Linux, `ZSV.foreach` has typically been 3 to 4 times faster than `CSV.foreach`: a little over 2x on very wide rows, up to about 11 to 12x on heavily quoted data. `liberal_parsing: false` adds a validation pass in Ruby and lands near 2x. ZSV makes about half the allocations and holds a parsed file in noticeably less memory. These are ranges from a few machines, not a promise: the CI summaries and your own run are the reference.
 
@@ -170,7 +170,7 @@ Both sides of every comparison do the same work on the same generated, fixed-see
 
 ## AI agents
 
-**This project is maintained by [developerz.ai](https://developerz.ai).** Its maintainer agent triages issues, reviews every pull request, merges every pull request once its author marks it ready and CI passes, watches project health daily, follows new releases of the zsv C library, and opens release PRs. The policy is in [`.dz/maintainer/maintainer.yml`](.dz/maintainer/maintainer.yml). Breaking changes stay with the owner.
+**This project is maintained by [developerz.ai](https://developerz.ai).** Its maintainer agent triages issues, reviews every pull request, merges every pull request once its author marks it ready and CI passes, follows new releases of the zsv C library, and opens release PRs. The policy is in [`.dz/maintainer/maintainer.yml`](.dz/maintainer/maintainer.yml). Breaking changes stay with the owner.
 
 - **Using zsv in your app?** Point your agent at [`llms.txt`](llms.txt), the complete reference in one file (methods, options, differences from `CSV`, pitfalls). Paste this into your app's `CLAUDE.md` / `AGENTS.md`:
   ```markdown

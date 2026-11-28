@@ -1,13 +1,14 @@
 name: Benchmarks
 
 # Runs benchmark/*_bench.rb (`rake bench`: ZSV against the CSV stdlib) on every
-# push to main and on demand, and writes the output into the job summary.
+# push to main that changes the extension, the library or a benchmark, and on demand, and writes the output into the job summary.
 # Numbers live in these run summaries, never in the docs. Not part of "CI OK";
 # a benchmark that crashes still fails its job. GitHub-hosted runners are noisy:
 # compare ratios within one run, not absolute numbers across runs.
 on:
   push:
     branches: [main]
+    paths: ['ext/**', 'lib/**', 'benchmark/**', 'Rakefile', 'Gemfile.lock', '.ruby-version', '.github/workflows/benchmark.yml']
   workflow_dispatch:
 
 concurrency:

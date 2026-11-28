@@ -15,6 +15,12 @@ name: CI
 # the precompiled platform gems in native-gems.yml (release + canary), and
 # benchmarks in benchmark.yml; none of them is part of "CI OK".
 #
+# Cost shape: a change that touches only prose (`*.md`, `docs/`) skips the
+# compile/test jobs (the `changes` job decides; "CI OK" still reports). A pull
+# request runs the floor and the newest Ruby on Linux x86_64 + arm64; the full
+# Ruby x OS matrix, macOS included, runs on every push to main that is not
+# docs-only, on a manual run and when release.yml calls this workflow.
+#
 # Windows is not in the matrix: extconf.rb builds the vendored zsv with its
 # POSIX shell `./configure` + `make` through Kernel#system, which cannot run a
 # shell script under RubyInstaller. Adding Windows means building libzsv through
@@ -37,6 +43,37 @@ env:
   CI: '1'
 
 jobs:
+  # Decides whether the change needs a compiler. Anything it cannot read
+  # (first push, API error, a truncated file list) counts as code.
+  changes:
+    name: Changes / code or docs only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+    steps:
+      - id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The commits this run tests: the base and the commit that is checked out (for a pull
+          # request that is the merge commit, so a file main moved is seen where it lands).
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          code=true
+          # "<files> <paths outside the docs filter>"; a rename counts under its old and its
+          # new name, and the filter tests whole paths (prefix or suffix, no line anchors). The compare API lists at most 300 files: 300 means "truncated".
+          # shellcheck disable=SC2016  # $paths is a jq variable, not a shell one
+          counts=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" --jq '
+            [.files[] | .filename, (.previous_filename // empty)] as $paths
+            | "\(.files | length) \($paths | map(select((endswith(".md") or startswith("docs/")) | not)) | length)"') || counts=''
+          read -r files other <<<"$counts" || true
+          if [ -n "$files" ] && [ "$files" -gt 0 ] && [ "$files" -lt 300 ] && [ "$other" = 0 ]; then
+            code=false
+          fi
+          echo "files changed: ${files:-unreadable}, outside the docs filter: ${other:-unreadable}"
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   workflows:
     name: Lint / workflows + repo guards
     runs-on: ubuntu-24.04
@@ -56,6 +93,8 @@ jobs:
 
   check:
     name: Gate / bin/check (Ruby .ruby-version, Linux x86_64)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -77,6 +116,8 @@ jobs:
 
   test:
     name: Test / Ruby ${{ matrix.ruby }} · ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -84,8 +125,10 @@ jobs:
       matrix:
         # ubuntu-24.04: x86_64 (SSE/AVX), ubuntu-24.04-arm and macos-latest:
         # arm64 (NEON), macos-15-intel: x86_64 Darwin.
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-15-intel]
-        ruby: ['3.3', '3.4', '4.0']
+        # The second list of each pair is the supported set; a pull request
+        # runs the first (see "Cost shape" above).
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04", "ubuntu-24.04-arm"]' || '["ubuntu-24.04", "ubuntu-24.04-arm", "macos-latest", "macos-15-intel"]') }}
+        ruby: ${{ fromJSON(github.event_name == 'pull_request' && '["3.3", "4.0"]' || '["3.3", "3.4", "4.0"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,6 +145,8 @@ jobs:
 
   sanitizers:
     name: Test / ASan + UBSan (Linux)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -120,6 +165,8 @@ jobs:
 
   package:
     name: Package / build + offline install + require
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -146,17 +193,20 @@ jobs:
   ci-ok:
     name: CI OK
     if: always()
-    # Every job above must succeed; skipped or cancelled counts as failed.
-    needs: [workflows, check, test, sanitizers, package]
+    # Every job above must succeed; cancelled counts as failed, and so does
+    # skipped unless the change is docs-only (changes.outputs.code == 'false').
+    needs: [changes, workflows, check, test, sanitizers, package]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: All required jobs passed
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          CODE: ${{ needs.changes.outputs.code }}
         run: |
-          echo "Results: $RESULTS"
+          echo "Results: $RESULTS (code change: $CODE)"
           for r in $RESULTS; do
+            if [ "$r" = skipped ] && [ "$CODE" = false ]; then continue; fi
             if [ "$r" != success ]; then
               echo "::error::A required job finished with '$r'. Open the failed job above: its step names the check, and the same command reproduces it locally."
               exit 1
