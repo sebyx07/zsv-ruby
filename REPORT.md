@@ -1,23 +1,23 @@
 ## Symptom
 
-The scheduled security release check asks whether a confirmed advisory affecting shipped code requires an off-cycle release, upstream upgrade, or issue. No specific advisory was supplied.
+The scheduled check asks whether a confirmed security fix needs an off-cycle release, an upstream upgrade, or an issue. No specific advisory was supplied.
 
 ## Evidence
 
-The local `git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main` returned `v1.4.4`. The shipping-path log from that tag to the locally available `origin/main` returned no commits. The tag resolves to `0a2b7ffd0e8d15a479045ee00eb1d49ae6ab0eb8`, and local `origin/main` resolves to `ad967bbed5420f67cc121029fb5d16f9fbcc8d38`. The GitHub default-branch commits reader also returned `ad967bbed542` as its newest commit. The pin and gem version are both 1.4.4.
+GitHub's latest gem release is `v1.4.4`, published on 2026-11-23. The public comparison from that tag to `main` reports six commits, through `7a414fcfeff9`, with no changes to `lib/`, `ext/`, or `zsv.gemspec`. The first commit after the release changes development tooling and documentation, not shipped code. The pin is `1.4.4` and GitHub reports upstream's latest full release as `v1.4.4`.
 
-The public GitHub API endpoints for [upstream advisories](https://api.github.com/repos/liquidaty/zsv/security-advisories) and [gem advisories](https://api.github.com/repos/sebyx07/zsv-ruby/security-advisories) each returned `[]`. The available GitHub reader does not expose Dependabot alerts or authenticated private advisories, and fetching tags is not permitted in this run. No conclusion about those missing sources or tags is implied.
+The public GitHub advisory endpoints for [the gem](https://api.github.com/repos/sebyx07/zsv-ruby/security-advisories) and [upstream](https://api.github.com/repos/liquidaty/zsv/security-advisories) both returned `[]`. The GitHub reader supplied to this run does not expose Dependabot alerts or private advisories. Those sources were not checked, so the security assessment is incomplete.
 
 ## Root cause
 
-No confirmed qualifying advisory or unreleased shipping fix was found in the sources available. The empty local shipping window rules out an off-cycle release from that window, but does not establish that no affected upstream advisory or Dependabot alert exists. The incomplete security check is caused by unavailable authenticated alert access and fresh tag synchronization, not by a reproduced product failure.
+No qualifying unreleased shipping fix was found in the public release comparison, and no public repository advisory was returned. This is not proof that no applicable private advisory or Dependabot alert exists. No product failure was reported or reproduced.
 
 ## Fix
 
-No release, upgrade, issue, or product code change was made. Access to authenticated Dependabot alerts, private repository advisories, and a fresh tag view is recorded as blocked. Public advisories alone do not justify changing the pin or version. Tests were not run because no executable code changed.
+No product, release, or upstream pin change was made. The missing authenticated alert and advisory read capability is recorded as blocked. Tests were not run because no executable code changed.
 
 ## Verify
 
-With fresh authorized refs and alert access, run `git log --format='%h %cI %s' "$(git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main)"..origin/main -- 'lib/**' 'ext/**' zsv.gemspec`. An empty result means no shipping commits in that refreshed window; separately inspect authenticated alerts and advisories before concluding the security check is complete.
+Check the public comparison at https://api.github.com/repos/sebyx07/zsv-ruby/compare/v1.4.4...main for changes under `lib/`, `ext/`, or `zsv.gemspec`; at the observed head it shows none. A complete check also requires an authorized reader for open Dependabot alerts and private repository advisories.
 
-no release: no qualifying advisory or unreleased shipping fix was established; authenticated alerts and fresh tags were unavailable.
+no release: no qualifying fix was found in the available evidence; authenticated security alerts were not accessible.
