@@ -37,7 +37,7 @@ All must stay true. 1 to 4 are detailed, with their rules, in `ext/CLAUDE.md`.
 5. **Parity with `CSV` for documented options.** For every compatible option in `docs/API_REFERENCE.md`, rows equal Ruby `CSV` for the same input; specs compare with `CSV` output, never a literal. List intended differences in `docs/API_REFERENCE.md` and `llms.txt`. Raise `ArgumentError` for unsupported options or values; never accept and ignore them.
 6. **Version sync.** Gem `X.Y.Z` ships zsv `X.Y.Z`. A gem-only release appends a fourth segment (`X.Y.Z.1`). The pin may be ahead of the gem between a zsv upgrade and its release; the gem is never ahead of the pin (`bin/repo-guards`).
 7. **Vendored, pinned, offline.** `ext/zsv/ZSV_UPSTREAM` holds the zsv version and the SHA-256 of its upstream tarball. `ext/zsv/vendor/zsv/` is exactly what `rake zsv:vendor` extracts from that verified tarball (`rake zsv:verify` proves it) and ships inside the gem. `gem install` and `rake compile` never touch the network and never link a system libzsv.
-8. **Honest numbers.** No speedup or memory figure in README, docs or the gemspec that a reproducible benchmark run does not show. `benchmark.yml` posts every `main` push's `rake bench` output; docs point there.
+8. **Honest numbers.** No speedup or memory figure in README, docs or the gemspec that a reproducible benchmark run does not show. `benchmark.yml` posts the `rake bench` output of every `main` push that changes shipped code; docs point there.
 
 Floors and platforms: the Ruby floor is `required_ruby_version` in the gemspec; the dev Ruby is `.ruby-version`; tested Rubies, OSes and architectures are the matrix in `.github/workflows/ci.yml`. Never restate them in docs.
 
