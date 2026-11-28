@@ -18,6 +18,6 @@ No product, release, or upstream pin change was made. The missing authenticated 
 
 ## Verify
 
-Check the public comparison at https://api.github.com/repos/sebyx07/zsv-ruby/compare/v1.4.4...main for changes under `lib/`, `ext/`, or `zsv.gemspec`; at the observed head it shows none. A complete check also requires an authorized reader for open Dependabot alerts and private repository advisories.
+Check the public comparison at https://api.github.com/repos/sebyx07/zsv-ruby/compare/v1.4.4...7a414fcfeff9 for changes under `lib/`, `ext/`, or `zsv.gemspec`; at the observed head it shows none. A complete check also requires an authorized reader for open Dependabot alerts and private repository advisories.
 
 no release: no qualifying fix was found in the available evidence; authenticated security alerts were not accessible.
