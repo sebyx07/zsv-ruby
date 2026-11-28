@@ -170,7 +170,7 @@ Both sides of every comparison do the same work on the same generated, fixed-see
 
 ## AI agents
 
-**This project is maintained by [developerz.ai](https://developerz.ai).** Its maintainer agent triages issues, reviews every pull request, merges every pull request once its author marks it ready and CI passes, watches project health daily, follows new releases of the zsv C library, and opens release PRs. The policy is in [`.dz/maintainer/maintainer.yml`](.dz/maintainer/maintainer.yml). Breaking changes stay with the owner.
+**This project is maintained by [developerz.ai](https://developerz.ai).** Its maintainer agent triages issues, reviews every pull request, merges every pull request once its author marks it ready and CI passes, follows new releases of the zsv C library, and opens release PRs. The policy is in [`.dz/maintainer/maintainer.yml`](.dz/maintainer/maintainer.yml). Breaking changes stay with the owner.
 
 - **Using zsv in your app?** Point your agent at [`llms.txt`](llms.txt), the complete reference in one file (methods, options, differences from `CSV`, pitfalls). Paste this into your app's `CLAUDE.md` / `AGENTS.md`:
   ```markdown

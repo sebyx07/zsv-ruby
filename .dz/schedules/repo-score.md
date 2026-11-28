@@ -41,9 +41,7 @@ estimate, and is left out of the total.
 9. **Issues are decided.** No issue open over 30 days with no triage decision.
 10. **Deploy verdict wired.** One lane ships here: `.github/workflows/release.yml` publishes the
     source gem and the precompiled platform gems to RubyGems, then tags and creates the GitHub
-    release. It must report its outcome (a failed run, and the daily `health` checkup's
-    `release-unpublished`, `rubygems-version-lag`, `release-untagged` and
-    `release-platforms-partial` rows in `.dz/schedules/health.md`). Fails when the lane ships and
+    release. It must report its outcome (a failed workflow run is that report). Fails when the lane ships and
     nothing reports. There is no server or site to deploy: that passes.
 
 No file holds checks 7, 8 and 9: grade each from its Signals section; a missing one is `not read`.
@@ -74,7 +72,7 @@ One per check; a handoff reports one failing row.
 - Confirm before you claim: read the file that does the thing, not only a file that mentions it.
 - A check that does not apply here passes, and keeps its 10 points.
 - One handoff per failing row: every site of the failure goes in it, worst first.
-- A row the daily `health` checkup already filed (an open issue with its title: `main is red at …`,
+- A row that already has an open issue (its title: `main is red at …`,
   `Dependabot PR #<n> is stuck`, `release v<version> did not publish`) is scored, not filed again.
 - An open `chore: zsv X.Y.Z` or `release: X.Y.Z` pull request belongs to the `upstream-zsv` and
   `release-due` tasks: score it under check 8 when it is over 7 days old, and say which task owns

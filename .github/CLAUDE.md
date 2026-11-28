@@ -22,7 +22,7 @@ Outside contributors do not change `.github/`, `bin/`, the `Rakefile`, the gemsp
 | `changes` | Reads the changed files: `code=false` when every one is `*.md` or under `docs/`. `check`, `test`, `sanitizers` and `package` then skip; anything unreadable counts as code |
 | `workflows` | actionlint + zizmor on `.github/workflows`; `bin/repo-guards` |
 | `check` | **`bin/check`**, unchanged, on `.ruby-version` and Linux x86_64 with `ZSV_REQUIRE_CLANG_FORMAT=1`: repo guards, RuboCop, clang-format, compile, RSpec. The only place lint runs |
-| `test` | compile + RSpec on every supported Ruby x OS/arch (x86_64 and arm64, Linux and macOS) on a push to `main`, a manual run and a release; a pull request runs the floor and the newest Ruby on Linux x86_64 + arm64 |
+| `test` | compile + RSpec on every supported Ruby x OS/arch (x86_64 and arm64, Linux and macOS) on a push to `main` that is not docs-only, a manual run and a release; a pull request runs the floor and the newest Ruby on Linux x86_64 + arm64 |
 | `sanitizers` | the extension built with `-fsanitize=address,undefined`, the suite with the runtimes preloaded. `bin/check asan` is the same recipe |
 | `package` | `rake build`, install the gem into an empty `GEM_HOME` with the network disabled, require it, parse |
 | `ci-ok` (`CI OK`) | Fails unless every job above succeeded; cancelled counts as failed, and so does skipped unless `changes` said docs-only |
@@ -53,5 +53,5 @@ Rules:
 - Never `gem push`, `rake release` (it aborts on purpose), or push a `v*` tag. The tag is an output of the release, created after RubyGems has the gems.
 - A merge that does not change `version.rb` publishes nothing. Do not write "released" in a PR or issue until the gem is on rubygems.org: `gem info zsv --remote`.
 - A published version is never pushed again and never reused. Recovery for each failure point: `RELEASE.md` § If a release fails. A broken release: the owner yanks it, the fix is the next version.
-- The weekly `release-due` checkup (`.dz/schedules/release-due.md`) decides when a release PR is opened; `security-release` covers confirmed security fixes on the other days.
+- The weekly `release-due` checkup (`.dz/schedules/release-due.md`) decides when a release PR is opened; a fix for a published high or critical advisory in what ships is the one release the owner may cut off-cycle.
 - A breaking change needs the owner's decision before merge.

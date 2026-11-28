@@ -13,7 +13,7 @@
 #
 # The gem wraps the zsv C library (github.com/liquidaty/zsv) and its version mirrors it: gem X.Y.Z
 # ships zsv X.Y.Z. Once a month the `upstream-zsv` task checks for a newer zsv release and opens
-# `chore: zsv X.Y.Z`. Each week the `release-due` checkup judges whether a release is needed and
+# `chore: zsv X.Y.Z`. Each Monday the `release-due` checkup judges whether a release is needed and
 # opens a release PR when so, and merging it IS the release (.github/workflows/release.yml
 # publishes when lib/zsv/version.rb changes on main, then tags). Dependency-bot PRs merge through
 # this agent only: there is no second merger (no GitHub auto-merge workflow) that would skip review.
@@ -146,29 +146,24 @@ escalate:
 # Modes. A `scout` firing (the default) is read-only: it reads the checkout and the platform's
 # signals and files asks, and an ask that names CI config or this policy is refused at ingest.
 # `mode: devops` runs the brief as one task with a shell and delivers a pull request (it needs
-# `handoff.mode: fleet`, set above). The four briefs that run commands and open a pull request
-# are devops; `health`, `repo-census` and `repo-score` only read and report, so they stay scouts.
+# `handoff.mode: fleet`, set above). The three briefs that run commands and open a pull request
+# are devops; `repo-census` and `repo-score` only read and report, so they stay scouts.
+#
+# Removed on 2026-11-28, from the platform's 30-day record across the fleet: `security-release`
+# (170 firings: 3 product merges and 17 pull requests that only rewrote REPORT.md, five of them
+# here) and `health` (270 firings, 8 asks, no merged fix; the platform already files a fix when
+# `main` is red).
 schedules:
-  # Weekly and judged, so a merge never cuts a release. One weekday per repo, so the fleet is not
-  # hit at once (better_structure_sql takes Thursday, ruby2html Friday).
+  # Weekly and judged, so a merge never cuts a release. Monday, the owner's release day for every
+  # repo; 09:00 so that on the first Monday it runs after `upstream-zsv` (05:00) below.
   - name: release-due
-    days: [wed]
-    hours_utc: [3]
+    days: [mon]
+    hours_utc: [9]
     brief_file: .dz/schedules/release-due.md
     mode: devops
-  # The one exception, so a confirmed security fix does not wait up to a week for the slot above.
-  - name: security-release
-    days: [mon, tue, thu, fri, sat, sun]
-    hours_utc: [2]
-    brief_file: .dz/schedules/security-release.md
-    mode: devops
-  - name: health
-    days: [mon, tue, wed, thu, fri, sat, sun]
-    hours_utc: [7]
-    brief_file: .dz/schedules/health.md
   # Monthly: the first Monday of the month (UTC days 1-7), after canary.yml's run on the 1st has
-  # built this gem against upstream's latest release. Two days before that week's `release-due`,
-  # so a merged `chore: zsv X.Y.Z` becomes gem X.Y.Z the same week.
+  # built this gem against upstream's latest release. Four hours before that day's `release-due`,
+  # so a `chore: zsv X.Y.Z` merged by then becomes gem X.Y.Z the same day, else the next Monday.
   - name: upstream-zsv
     days: [mon]
     weeks_of_month: [1]
@@ -198,7 +193,7 @@ schedules:
     days: [tue]
     hours_utc: [11]
     brief_file: .dz/schedules/repo-score.md
-  # Offered, off: each makes work, and health + improve already cover most of it (improve runs
+  # Offered, off: each makes work, and improve already covers most of it (improve runs
   # the sanitizers and the benchmarks monthly). Drop the leading `# ` on each line of an entry to
   # run it; its brief is committed beside the others.
   # - name: hygiene
@@ -214,3 +209,12 @@ schedules:
   #   hours_utc: [23]
   #   brief_file: .dz/schedules/fix-sweep.md
   #   mode: devops
+
+# scout: the platform's survey files only what is already BROKEN, never an improvement idea.
+scout:
+  survey: broken_only
+
+# care: no docs-citation tasks. Across the fleet they were 47 tasks in 30 days for 8 docs-only
+# merges and 33 failures.
+care:
+  docs_drift: off

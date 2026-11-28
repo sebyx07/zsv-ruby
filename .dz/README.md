@@ -6,8 +6,8 @@ this repository as an AI-managed project.
 - `maintainer/maintainer.yml`: the maintainer policy (triage, PRs, review, releases, schedules).
 - `maintainer/reviewer.md`: this repo's layer of the reviewer prompt (C safety first; what to reject, what never to flag).
 - `pipeline/agent-pipeline.json`: the agent pipeline definition.
-- `schedules/`: the scheduled briefs the policy fires. This repo's own: `health` (daily),
-  `release-due` (weekly), `security-release` (the other days), `upstream-zsv` (monthly: follow the
+- `schedules/`: the scheduled briefs the policy fires. This repo's own:
+  `release-due` (weekly, Monday), `upstream-zsv` (monthly: follow the
   wrapped zsv C library), `improve` (monthly). The developerz.ai platform's standard ones:
   `repo-census` and `repo-score` on (weekly); `hygiene`, `devops` and `fix-sweep` offered, their
   entries commented out.
