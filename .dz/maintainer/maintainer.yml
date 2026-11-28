@@ -218,3 +218,12 @@ scout:
 # merges and 33 failures.
 care:
   docs_drift: off
+
+# devops: advisories. First-tier security advisories are read against what this repo ships, and a
+# fix is filed when a shipped version is inside a vulnerable range. It replaces the daily
+# `security-release` schedule (removed 2026-11-28):
+# across the fleet the watch merged 91 pull requests in 14 days, 83 of them product fixes, where
+# the schedule fired 170 times in 30 days for 3. Routine updates still arrive weekly and grouped
+# through Dependabot (.github/dependabot.yml).
+devops:
+  watch: advisories
